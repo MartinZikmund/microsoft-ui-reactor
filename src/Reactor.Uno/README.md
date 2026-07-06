@@ -170,11 +170,13 @@ Three shared files carry `REACTOR_UNO` conditionals (the symbol is defined only 
 this project, so the Windows build is **unaffected** — verified green):
 
 - `Elements/ElementExtensions.Events.cs` — the Docking event fluents (`#if !REACTOR_UNO`).
-- `Core/Reconciler.Update.cs` — `Hyperlink.UnderlineStyle`. The CLR property *does*
-  exist in Uno, but its `UnderlineStyleProperty` dependency-property field does not
-  (as of Uno 6.7.0-dev.534), so the DP-based updater can't compile. Under
-  `#if REACTOR_UNO` the property is set via its CLR setter instead (clearing falls
-  back to the WinUI default `Single`), so underline styling still works on Uno.
+- `Core/Reconciler.Update.cs` — `Hyperlink.UnderlineStyle`. The CLR property is
+  public in Uno, but its `UnderlineStyleProperty` DP identifier is declared
+  `internal` (as of Uno 6.7.0-dev.534), so the DP-based updater can't compile
+  against it. Under `#if REACTOR_UNO` the property is set via its CLR setter instead
+  (clearing falls back to the WinUI default `Single`), so underline styling still
+  works on Uno. Upstream parity issue:
+  [unoplatform/uno#23652](https://github.com/unoplatform/uno/issues/23652).
 - `Core/Reconciler.Mount.cs` — `return null` → `return default` in a generic
   helper (semantically identical; satisfies the Uno compiler).
 
