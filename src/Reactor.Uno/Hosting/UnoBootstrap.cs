@@ -1,0 +1,108 @@
+// Uno host-builder bootstrap + code-only Application subclass.
+//
+// Uno 6 unifies hosting behind UnoPlatformHostBuilder (Uno.UI.Hosting). The
+// platform providers are compiled per-TFM: __WASM__ gets UseWebAssembly(); the
+// desktop TFM gets the X11/Framebuffer/macOS/Win32 providers (the builder picks
+// the one available at runtime).
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Reactor.Hosting;
+using Uno.UI.Hosting;
+
+namespace Microsoft.UI.Reactor;
+
+internal static class UnoBootstrap
+{
+    public static void Run() => BuildHost().Run();
+
+    public static Task RunAsync() => BuildHost().RunAsync();
+
+    private static UnoPlatformHost BuildHost()
+    {
+        var builder = UnoPlatformHostBuilder.Create()
+            .App(() => new ReactorApplication());
+
+#if __WASM__
+        builder = builder.UseWebAssembly();
+#elif __ANDROID__ || __IOS__ || __MACCATALYST__ || __TVOS__
+        // Mobile/Apple heads bootstrap from a native entry point (Activity /
+        // AppDelegate) rather than a console Main; the platform provider is wired
+        // by the head. ReactorApp.Run is desktop/WASM-oriented.
+#else
+        builder = builder
+            .UseX11()
+            .UseLinuxFrameBuffer()
+            .UseMacOS()
+            .UseWin32();
+#endif
+
+        return builder.Build();
+    }
+}
+
+/// <summary>
+/// The Uno <see cref="Application"/> that hosts a Reactor tree. Created by
+/// <see cref="UnoBootstrap"/>; reads startup config from <see cref="ReactorApp.Options"/>.
+/// </summary>
+internal sealed class ReactorApplication : Application
+{
+    private ReactorHost? _host;
+
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    {
+        // Marshal cross-thread setState callbacks back onto the UI thread.
+        var dq = DispatcherQueue.GetForCurrentThread();
+        if (dq is not null)
+        {
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherQueueSynchronizationContext(dq));
+        }
+
+        // WinUI control templates/styles.
+        try { Resources.MergedDictionaries.Add(new XamlControlsResources()); }
+        catch { /* resources already present / headless */ }
+
+        var opts = ReactorApp.Options;
+
+        var window = new Window();
+        try { window.Title = opts.WindowTitle; } catch { /* best effort */ }
+
+        var spec = new WindowSpec
+        {
+            Title = opts.WindowTitle,
+            Width = opts.WindowWidth,
+            Height = opts.WindowHeight,
+            FullScreen = opts.FullScreen,
+        };
+        var reactorWindow = new ReactorWindow(window, spec);
+        ReactorApp.RegisterWindow(reactorWindow);
+
+        _host = new ReactorHost(window) { OwningWindow = reactorWindow };
+        opts.Configure?.Invoke(_host);
+
+        if (opts.RootFactory is not null)
+            _host.Mount(opts.RootFactory());
+        else if (opts.RootRenderFunc is not null)
+            _host.Mount(opts.RootRenderFunc);
+
+        // Best-effort initial sizing (desktop). AppWindow is partially supported
+        // across Skia heads; ignore failures.
+        try
+        {
+            window.AppWindow?.Resize(
+                new global::Windows.Graphics.SizeInt32
+                {
+                    Width = (int)opts.WindowWidth,
+                    Height = (int)opts.WindowHeight,
+                });
+        }
+        catch { /* sizing unsupported on this head */ }
+
+        window.Activate();
+    }
+}
