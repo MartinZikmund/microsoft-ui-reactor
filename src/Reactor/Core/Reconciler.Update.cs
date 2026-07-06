@@ -933,7 +933,20 @@ public sealed partial class Reconciler
         WinDocs.Hyperlink target)
     {
         bool any = false;
+        // Uno exposes the Hyperlink.UnderlineStyle CLR property but not its
+        // UnderlineStyleProperty dependency-property field (as of Uno 6.7.0-dev.534),
+        // so the DP-based UpdateNullableStruct (it ClearValue()s the DP when cleared)
+        // can't compile there. Set the CLR property directly instead; a cleared value
+        // falls back to the WinUI default (Single) — what ClearValue would restore.
+#if REACTOR_UNO
+        if (prev.UnderlineStyle != next.UnderlineStyle)
+        {
+            target.UnderlineStyle = next.UnderlineStyle ?? WinDocs.UnderlineStyle.Single;
+            any = true;
+        }
+#else
         if (UpdateNullableStruct(prev.UnderlineStyle, next.UnderlineStyle, target, WinDocs.Hyperlink.UnderlineStyleProperty, v => target.UnderlineStyle = v)) any = true;
+#endif
         if (UpdateNullableStruct(prev.IsTabStop, next.IsTabStop, target, WinDocs.Hyperlink.IsTabStopProperty, v => target.IsTabStop = v)) any = true;
         if (UpdateNullableStruct(prev.TabIndex, next.TabIndex, target, WinDocs.Hyperlink.TabIndexProperty, v => target.TabIndex = v)) any = true;
         return any;

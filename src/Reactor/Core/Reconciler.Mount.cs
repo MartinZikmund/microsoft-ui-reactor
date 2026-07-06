@@ -380,7 +380,7 @@ public sealed partial class Reconciler
             var nested = FindDescendant<T>(child);
             if (nested is not null) return nested;
         }
-        return null;
+        return default;
     }
 
     internal static void HandleNumberBoxImmediateTextChanged(WinUI.NumberBox box, string text)
