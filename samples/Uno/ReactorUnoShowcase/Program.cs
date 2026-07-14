@@ -19,6 +19,7 @@ class Showcase : Component
         var (chk, setChk) = UseState<bool?>(true);
         var (combo, setCombo) = UseState(0);
         var (count, setCount) = UseState(0);
+        var (picked, setPicked) = UseState("(none)");
 
         return ScrollView(
             VStack(14,
@@ -40,7 +41,19 @@ class Showcase : Component
                 TextBlock(chk == true ? "Checked" : "Unchecked"),
 
                 TextBlock($"Favourite: {Fruits[combo]}"),
-                ComboBox(Fruits, combo, setCombo)
+                ComboBox(Fruits, combo, setCombo),
+
+                // Uno implements the WinRT pickers, including the
+                // WindowNative.GetWindowHandle + InitializeWithWindow association
+                // the shared hook performs — the very pattern Uno's own docs
+                // prescribe. Nothing Windows-only here.
+                Heading("File picker"),
+                TextBlock($"Picked: {picked}"),
+                Button("Pick a file…", async () =>
+                {
+                    var file = await UseFilePickerAsync(new FilePickerOptions());
+                    setPicked(file?.Name ?? "(cancelled)");
+                })
 #if !__WASM__
                 ,
                 Heading("Multi-window"),
