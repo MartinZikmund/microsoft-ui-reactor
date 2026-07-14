@@ -8,6 +8,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -55,6 +56,20 @@ internal sealed class ReactorApplication : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // Process-wide unhandled-exception routing. Mirrors the Windows host:
+        // log, then let an app-supplied hook decide whether to swallow. Unknown
+        // exceptions are left unhandled so the app crashes with a useful error
+        // rather than limping along corrupt.
+        UnhandledException += (_, e) =>
+        {
+            ReactorApp.AppLogger?.LogError(
+                e.Exception,
+                "UnhandledException: {ExceptionType}: {ExceptionMessage}",
+                e.Exception.GetType().Name, e.Exception.Message);
+            if (ReactorApp.OnUnhandledException is not null)
+                e.Handled = ReactorApp.OnUnhandledException(e.Exception);
+        };
+
         // Marshal cross-thread setState callbacks back onto the UI thread.
         var dq = DispatcherQueue.GetForCurrentThread();
         if (dq is not null)

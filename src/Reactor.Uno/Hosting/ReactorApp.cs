@@ -64,6 +64,13 @@ public static partial class ReactorApp
     /// <summary>Optional process-wide logger snapshotted by each host at construction.</summary>
     public static ILogger? AppLogger { get; set; }
 
+    /// <summary>
+    /// Optional process-wide unhandled-exception hook. Return true to mark the
+    /// exception handled; return false (or leave null) to let it crash. Mirrors
+    /// the Windows framework's <c>ReactorApp.OnUnhandledException</c>.
+    /// </summary>
+    public static Func<Exception, bool>? OnUnhandledException { get; set; }
+
     /// <summary>Devtools are not available in the Uno port.</summary>
     public static bool DevtoolsEnabled => false;
 

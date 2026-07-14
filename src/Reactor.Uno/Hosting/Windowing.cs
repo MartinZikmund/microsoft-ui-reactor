@@ -116,9 +116,8 @@ public sealed class ReactorWindow
         // shape the shared hooks expect.
         nativeWindow.Activated += (_, args) =>
         {
-            // Uno types WindowActivatedEventArgs.WindowActivationState as
-            // CoreWindowActivationState; compare by name to stay version-agnostic.
-            bool deactivated = args.WindowActivationState.ToString() == "Deactivated";
+            bool deactivated =
+                args.WindowActivationState == global::Windows.UI.Core.CoreWindowActivationState.Deactivated;
             if (deactivated)
             {
                 IsActive = false;
