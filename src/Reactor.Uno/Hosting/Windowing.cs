@@ -166,14 +166,58 @@ public sealed class ReactorWindow
         }
     }
 
-#pragma warning disable CS0067 // Skia heads don't surface all of these; events are API surface.
+    /// <summary>Raised when this window's DPI changes (monitor move or display-scale change).</summary>
+    public event EventHandler<uint>? DpiChanged;
+
+    /// <summary>Raised when the window becomes active.</summary>
+    public event EventHandler? Activated;
+
+    /// <summary>Raised when the window is deactivated.</summary>
+    public event EventHandler? Deactivated;
+
+#pragma warning disable CS0067 // Skia heads don't surface these; kept as API surface.
     public event EventHandler<WindowDipPositionChangedEventArgs>? PositionChanged;
     public event EventHandler<WindowZOrderChangedEventArgs>? ZOrderChanged;
     public event EventHandler<WindowState>? StateChanged;
-    public event EventHandler<uint>? DpiChanged;
-    public event EventHandler? Activated;
-    public event EventHandler? Deactivated;
 #pragma warning restore CS0067
+
+    // ── DPI-change notification ──
+    //
+    // Uno raises XamlRoot.Changed when the window's RasterizationScale changes
+    // (dragged to a monitor with a different scale, or the display scale is
+    // changed). It also fires for size changes, so only surface DpiChanged when
+    // the DPI value actually moved. Each window has its own XamlRoot, so this is
+    // correctly per-window under multi-window.
+    private Microsoft.UI.Xaml.XamlRoot? _xamlRoot;
+    private uint _lastDpi;
+
+    // Called by ReactorHost whenever it installs new content into this window —
+    // the XamlRoot only exists once content is attached.
+    internal void OnContentAttached(Microsoft.UI.Xaml.UIElement? content)
+    {
+        var root = content?.XamlRoot;
+        if (ReferenceEquals(root, _xamlRoot)) return;
+
+        if (_xamlRoot is not null)
+            _xamlRoot.Changed -= OnXamlRootChanged;
+
+        _xamlRoot = root;
+        if (_xamlRoot is null) return;
+
+        _lastDpi = Dpi;
+        _xamlRoot.Changed += OnXamlRootChanged;
+    }
+
+    private void OnXamlRootChanged(
+        Microsoft.UI.Xaml.XamlRoot sender,
+        Microsoft.UI.Xaml.XamlRootChangedEventArgs args)
+    {
+        uint dpi = Dpi;
+        if (dpi == _lastDpi) return;
+
+        _lastDpi = dpi;
+        DpiChanged?.Invoke(this, dpi);
+    }
 
     /// <summary>Lifetime-bound aspect-ratio lock. No-op on Skia; returns a disposable token.</summary>
     public IDisposable RegisterAspectRatioOverride(double? widthOverHeight) => NoopDisposable.Instance;

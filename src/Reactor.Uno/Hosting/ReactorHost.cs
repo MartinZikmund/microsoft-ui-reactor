@@ -275,6 +275,9 @@ public sealed class ReactorHost : IDisposable
                 else
                     _window.Content = newControl;
                 AttachThemeListener(newControl);
+                // The XamlRoot (and hence RasterizationScale) only exists once
+                // content is attached — let the window (re)bind its DPI listener.
+                OwningWindow?.OnContentAttached(newControl);
             }
 
             _currentControl = newControl;

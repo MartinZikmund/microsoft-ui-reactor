@@ -209,7 +209,7 @@ Legend: ✅ works · 🟡 partial / unverified · ❌ not supported (compiles, b
 | High-contrast / forced-colors detection | ❌ | `AccessibilitySettings.HighContrast` not implemented — charts don't adapt to high contrast. |
 | Single window + render loop + error fallback | ✅ | |
 | Multi-window (`OpenWindow` / `UseOpenWindow`) | ✅ desktop | Real secondary windows on every desktop head (X11 / Win32 / macOS / FrameBuffer), each with its own `ReactorHost`, render loop and state. Android/iOS throw `InvalidOperationException` (Uno doesn't support secondary windows there) — `UseOpenWindow` catches it and degrades to a null handle. No OS windows in the browser (wasm). Demoed in `samples/Uno/ReactorUnoShowcase`. |
-| DPI | 🟡 | Read via `XamlRoot.RasterizationScale`; `DpiChanged` is not raised. |
+| DPI (`UseDpi`) | ✅ | Per-window DPI from `XamlRoot.RasterizationScale`, and live changes (window dragged to a monitor with a different scale, or the display scale changed) re-render via `XamlRoot.Changed`. Correctly per-window, since each window has its own `XamlRoot`. |
 | File / folder pickers | 🟡 | Compiled in via the Windows WinRT HWND path (`InitializeWithWindow`); **unverified** on Skia heads — not a stub. |
 | Tray icons / shell (jump list, taskbar) | ❌ | Stub no-ops. |
 | Window persistence (placement save/restore) | ❌ | Not shared. |
