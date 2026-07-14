@@ -166,19 +166,21 @@ window persistence, and the in-app devtools menu.
 
 ### Surgical shared-source edits
 
-Three shared files carry `REACTOR_UNO` conditionals (the symbol is defined only by
-this project, so the Windows build is **unaffected** — verified green):
+The port touches only **two** shared files, and just one of them carries a
+`REACTOR_UNO` conditional (the symbol is defined only by this project, so the
+Windows build is **unaffected** — verified green):
 
-- `Elements/ElementExtensions.Events.cs` — the Docking event fluents (`#if !REACTOR_UNO`).
-- `Core/Reconciler.Update.cs` — `Hyperlink.UnderlineStyle`. The CLR property is
-  public in Uno, but its `UnderlineStyleProperty` DP identifier is declared
-  `internal` (as of Uno 6.7.0-dev.534), so the DP-based updater can't compile
-  against it. Under `#if REACTOR_UNO` the property is set via its CLR setter instead
-  (clearing falls back to the WinUI default `Single`), so underline styling still
-  works on Uno. Upstream parity issue:
-  [unoplatform/uno#23652](https://github.com/unoplatform/uno/issues/23652).
+- `Elements/ElementExtensions.Events.cs` — the Docking event fluents (`#if !REACTOR_UNO`),
+  since `Docking/` is excluded from the port.
 - `Core/Reconciler.Mount.cs` — `return null` → `return default` in a generic
-  helper (semantically identical; satisfies the Uno compiler).
+  helper. Not a conditional: semantically identical on both builds (`T` is
+  constrained to a reference type); it just satisfies Uno's nullable analysis.
+
+> A second conditional used to guard `Hyperlink.UnderlineStyle` (Uno declared the
+> `UnderlineStyleProperty` DP identifier `internal`). That was fixed upstream in
+> [unoplatform/uno#23652](https://github.com/unoplatform/uno/issues/23652), so as of
+> `Uno.Sdk 6.7.0-dev.117` the guard is gone and the shared DP-based updater compiles
+> unchanged.
 
 ### Name disambiguation (`GlobalUsings.cs`)
 
@@ -188,21 +190,54 @@ already carries its own `using` directives, so global aliases pin the few bare
 names that would otherwise be ambiguous (`SelectionMode` → Reactor's;
 `ElementFactoryGetArgs`/`RecycleArgs` → `Microsoft.UI.Xaml`).
 
+## Feature support on Uno Skia
+
+Legend: ✅ works · 🟡 partial / unverified · ❌ not supported (compiles, but no-ops or throws at runtime).
+
+| Area | Status | Notes |
+| --- | :---: | --- |
+| MVU core: hooks, state, effects, memo, reconciler | ✅ | Full parity with the Windows framework. |
+| Layout: Grid, Stack, panels, Yoga/Flex | ✅ | |
+| Core controls: Button, TextBlock, TextBox, ToggleSwitch, Slider, ProgressBar, CheckBox, ComboBox, ScrollView | ✅ | Sample-verified (desktop + wasm). |
+| Theming (Light/Dark) + live theme-change re-render | ✅ | |
+| Implicit animations & transitions (Scale/Rotation/Opacity/Translation transitions, spring / natural-motion, `ImplicitAnimationCollection`) | ❌ | Not implemented in Uno — the calls no-op. |
+| RichTextBlock / rich inline text / Markdown rendering | 🟡 | Most `RichTextBlock` members are not implemented in Uno; rich text and Markdown render incompletely. |
+| RichEditBox | ❌ | Not implemented in Uno. |
+| Custom TitleBar (drag regions, back button, panes) | ❌ | Not implemented in Uno. |
+| Specialty controls: ParallaxView, MapControl, SemanticZoom, LinedFlowLayout, AnnotatedScrollBar | ❌ | Not implemented in Uno. |
+| Gesture/access flags: `IsTapEnabled` / `IsHoldingEnabled` / `IsDoubleTapEnabled` / `IsRightTapEnabled`, `AccessKey`, `CharacterReceived` | 🟡 | Those specific flags no-op; basic pointer/click still works. |
+| High-contrast / forced-colors detection | ❌ | `AccessibilitySettings.HighContrast` not implemented — charts don't adapt to high contrast. |
+| Single window + render loop + error fallback | ✅ | |
+| Multi-window (`OpenWindow` / `UseOpenWindow`) | ❌ | Degrades to the primary window. |
+| DPI | 🟡 | Read via `XamlRoot.RasterizationScale`; `DpiChanged` is not raised. |
+| File / folder pickers | 🟡 | Compiled in via the Windows WinRT HWND path (`InitializeWithWindow`); **unverified** on Skia heads — not a stub. |
+| Tray icons / shell (jump list, taskbar) | ❌ | Stub no-ops. |
+| Window persistence (placement save/restore) | ❌ | Not shared. |
+| System backdrop / Mica / DWM effects | ❌ | Not shared. |
+| Multi-monitor / display enumeration | ❌ | `ReactorDisplay.Displays` returns empty. |
+| Window drag-move, aspect-ratio lock, closing guards | ❌ | No-op stubs on Skia. |
+| Docking (dock manager, tab tear-off, floating windows, splitters) | ❌ | Excluded from the port entirely. |
+| In-app devtools | ❌ | `DevtoolsEnabled` is `false`. |
+| Charting / DataGrid / PropertyGrid | 🟡 | Compile and share the WinUI render path; not yet runtime-verified on Skia. |
+
+> The ❌ / 🟡 runtime rows line up with the `Uno0001` *not-implemented* build warnings: the code compiles, but those specific APIs no-op (or throw) on Uno. They don't affect the ✅ rows.
+
 ## Known limitations / notes
 
-- **Uno version is pinned** to `6.7.0-dev.93` (Sdk) / `6.7.0-dev.534` (runtime
-  packages) in `global.json` and `Reactor.Uno.csproj`. Bump both together.
+- **Uno version.** The port requires Uno **6.7** APIs (`DispatcherQueueSynchronizationContext`,
+  the `TitleBar` drag-region APIs) that are absent from the current 6.5 GA, so it
+  pins the 6.7 preview — `Uno.Sdk 6.7.0-dev.117`, set in `global.json` (repo root,
+  `src/Reactor.Uno/`, `samples/Uno/`, and the file-based `Counter.cs` header).
+  Switch to 6.7 GA when it ships. The Skia runtime packages take their version from
+  `$(UnoVersion)`, which **Uno.Sdk supplies**, so they track the SDK automatically —
+  don't hardcode a version for them (it drifts and trips `NU1605`).
 - **Don't name a file-based app's root component `App`** — Uno.Sdk generates an
   `App` type for single-project EXEs, which would clash. Use any other name
   (`CounterApp`, `MyApp`, …); `ReactorApp.Run<T>` doesn't care.
-- A handful of APIs surface `Uno0001` *not-implemented* build warnings (e.g.
-  `UIElement.AccessKey`, `RichTextBlock.Blocks`). These are runtime no-ops in
-  Uno, not build breaks — they only affect those specific features.
-- Multi-window, tray icons, file pickers, window persistence, DPI/aspect-ratio
-  control, and the devtools surface are stubbed or unsupported on Skia heads.
-- Charting / DataGrid / PropertyGrid / Markdown **compile** for Uno; they share
-  the same `Microsoft.UI.Xaml` rendering path, but haven't been exercised as
-  thoroughly at runtime as the core controls.
+- See the **Feature support on Uno Skia** matrix above for what works, what's
+  partial, and what's unsupported. The unsupported/partial rows surface as
+  `Uno0001` *not-implemented* build warnings — runtime no-ops in Uno, not build
+  breaks — and only affect those specific features.
 
 ## Mobile
 

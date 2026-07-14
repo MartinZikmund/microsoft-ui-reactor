@@ -380,6 +380,9 @@ public sealed partial class Reconciler
             var nested = FindDescendant<T>(child);
             if (nested is not null) return nested;
         }
+        // `default` (== null; T is constrained to a reference type) rather than
+        // `null` to satisfy Uno's nullable analysis on the shared build; identical
+        // behavior on Windows.
         return default;
     }
 
