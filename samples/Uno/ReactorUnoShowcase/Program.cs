@@ -41,7 +41,42 @@ class Showcase : Component
 
                 TextBlock($"Favourite: {Fruits[combo]}"),
                 ComboBox(Fruits, combo, setCombo)
+#if !__WASM__
+                ,
+                Heading("Multi-window"),
+                TextBlock("Each window gets its own Reactor host, render loop, and state."),
+                Button("Open a second window", OpenSecondWindow)
+#endif
             ).Padding(24)
         );
     }
+
+#if !__WASM__
+    // Secondary windows are real on every Uno desktop head (X11 / Win32 / macOS /
+    // FrameBuffer). Android and iOS throw InvalidOperationException instead.
+    static void OpenSecondWindow() =>
+        ReactorApp.OpenWindow(
+            new WindowSpec { Title = "Second Window", Width = 380, Height = 260 },
+            static () => new SecondWindow());
+#endif
 }
+
+#if !__WASM__
+class SecondWindow : Component
+{
+    public override Element Render()
+    {
+        var (count, setCount) = UseState(0);
+
+        return VStack(12,
+            Heading("Second window 🎉"),
+            TextBlock("Independent of the main window:"),
+            TextBlock($"Count: {count}"),
+            HStack(8,
+                Button("-", () => setCount(count - 1)),
+                Button("+", () => setCount(count + 1))
+            )
+        ).Padding(24);
+    }
+}
+#endif

@@ -5,9 +5,10 @@
 // is excluded from the Uno build. The shared core (Core/RenderContext.cs windowing
 // hooks, Core/Element.cs title-bar wiring) still references these *types*, so this
 // file provides Uno-friendly equivalents with the exact member surface the shared
-// source touches. Single-window apps (the file-based Reactor-on-Uno target) use
-// only a small slice; multi-window / tray / picker hooks are present so the core
-// compiles and degrade gracefully on Skia targets.
+// source touches. Windows are real: ReactorApp.OpenWindow builds one of these per
+// Microsoft.UI.Xaml.Window, each with its own ReactorHost. The chrome members Skia
+// can't honour (tray, drag-move, aspect-ratio lock, display enumeration) are no-op
+// stubs so the shared core still compiles and degrades gracefully.
 
 using System;
 using System.Collections.Generic;
@@ -136,6 +137,9 @@ public sealed class ReactorWindow
 
     /// <summary>The spec this window was opened with.</summary>
     public WindowSpec Spec { get; private set; }
+
+    /// <summary>The Reactor host rendering into this window.</summary>
+    public Microsoft.UI.Reactor.Hosting.ReactorHost? Host { get; internal set; }
 
     public bool IsActive { get; private set; } = true;
     public WindowState State { get; private set; } = WindowState.Normal;

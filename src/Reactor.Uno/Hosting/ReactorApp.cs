@@ -4,8 +4,9 @@
 // built on Application.Start + Win32/DWM/shell P/Invoke). Here, startup goes
 // through Uno's UnoPlatformHostBuilder (Uno 6 unified Skia hosting) and a
 // code-only Application subclass. Only the static surface the shared core reads
-// (ActiveHostInternal, UIDispatcher, …) plus the public Run entry points are
-// provided; multi-window / tray / persistence are minimal single-window stubs.
+// (ActiveHostInternal, UIDispatcher, …) plus the public Run/OpenWindow entry points
+// are provided. Multi-window is real on the desktop heads (every window gets its own
+// ReactorHost); tray icons and window persistence remain stubs.
 
 using System;
 using System.Collections.Generic;
@@ -74,7 +75,7 @@ public static partial class ReactorApp
     /// <summary>Devtools are not available in the Uno port.</summary>
     public static bool DevtoolsEnabled => false;
 
-    // ── single-window topology stubs (multi-window is a Windows feature) ──
+    // ── window topology (tray icons remain a Windows-shell stub) ──
     private static readonly List<ReactorWindow> _windows = new();
     private static readonly List<ReactorTrayIcon> _trayIcons = new();
 
@@ -93,7 +94,17 @@ public static partial class ReactorApp
         PrimaryWindow ??= w;
     }
 
-    /// <summary>Finds an open window by key. Single-window model: returns the primary if it matches.</summary>
+    internal static void UnregisterWindow(ReactorWindow w)
+    {
+        lock (_windows)
+        {
+            _windows.Remove(w);
+            if (ReferenceEquals(PrimaryWindow, w))
+                PrimaryWindow = _windows.Count > 0 ? _windows[0] : null;
+        }
+    }
+
+    /// <summary>Finds an open window by its <see cref="WindowSpec.Key"/>.</summary>
     public static ReactorWindow? FindWindow(WindowKey key)
     {
         lock (_windows)
@@ -105,15 +116,97 @@ public static partial class ReactorApp
     }
 
     /// <summary>
-    /// Opening additional native windows is not supported on Skia heads in this
-    /// port; returns the primary window so <c>UseOpenWindow</c> degrades to a no-op.
+    /// Opens a window hosting its own Reactor tree. Signature-compatible with the
+    /// Windows framework's <c>ReactorApp.OpenWindow</c>.
     /// </summary>
-    public static ReactorWindow? OpenWindow(WindowKey key, WindowSpec spec, Func<Component> factory)
-        => FindWindow(key) ?? PrimaryWindow;
+    /// <remarks>
+    /// <para>Real secondary windows work on every Uno <b>desktop</b> head
+    /// (X11 / Win32 / macOS / FrameBuffer). Android and iOS do not support secondary
+    /// windows: Uno throws <see cref="InvalidOperationException"/> from the
+    /// <c>Window</c> constructor, which <c>UseOpenWindow</c> catches and degrades to
+    /// a null handle rather than failing the render.</para>
+    /// <para>Must be called on the UI thread.</para>
+    /// </remarks>
+    public static ReactorWindow OpenWindow(
+        WindowSpec spec,
+        Func<Component> root,
+        Action<ReactorHost>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(root);
+        return OpenWindowCore(spec, root, renderFunc: null, configure);
+    }
 
-    /// <summary>Overload used by <c>UseOpenWindow</c> (key carried on the spec).</summary>
-    public static ReactorWindow? OpenWindow(WindowSpec spec, Func<Component> factory)
-        => (spec.Key is { } k ? FindWindow(k) : null) ?? PrimaryWindow;
+    /// <summary>
+    /// Opens a window with a render-function root. See the <see cref="Component"/>
+    /// overload for platform support and <paramref name="configure"/> semantics.
+    /// </summary>
+    public static ReactorWindow OpenWindow(
+        WindowSpec spec,
+        Func<RenderContext, Element> render,
+        Action<ReactorHost>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(render);
+        return OpenWindowCore(spec, rootFactory: null, render, configure);
+    }
+
+    // Single construction path for every Reactor window — the primary one that
+    // UnoBootstrap opens at launch and every secondary window opened later.
+    internal static ReactorWindow OpenWindowCore(
+        WindowSpec spec,
+        Func<Component>? rootFactory,
+        Func<RenderContext, Element>? renderFunc,
+        Action<ReactorHost>? configure)
+    {
+        // On Android/iOS this throws InvalidOperationException for anything after
+        // the first window. Deliberately not caught here: UseOpenWindow handles it.
+        var native = new Microsoft.UI.Xaml.Window();
+        var window = new ReactorWindow(native, spec);
+        var host = new ReactorHost(native) { OwningWindow = window };
+        window.Host = host;
+
+        configure?.Invoke(host);
+        RegisterWindow(window);
+        native.Closed += (_, _) => UnregisterWindow(window);
+
+        try
+        {
+            if (rootFactory is not null)
+                host.Mount(rootFactory());
+            else if (renderFunc is not null)
+                host.Mount(renderFunc);
+
+            ApplyChrome(native, spec);
+            native.Activate();
+        }
+        catch
+        {
+            UnregisterWindow(window);
+            try { host.Dispose(); } catch { /* best effort */ }
+            throw;
+        }
+
+        return window;
+    }
+
+    // Title + initial size. AppWindow is only partially supported across Skia
+    // heads, so sizing is best-effort.
+    private static void ApplyChrome(Microsoft.UI.Xaml.Window native, WindowSpec spec)
+    {
+        try { native.Title = spec.Title; } catch { /* best effort */ }
+
+        try
+        {
+            native.AppWindow?.Resize(
+                new global::Windows.Graphics.SizeInt32
+                {
+                    Width = (int)spec.Width,
+                    Height = (int)spec.Height,
+                });
+        }
+        catch { /* sizing unsupported on this head */ }
+    }
 
     /// <summary>Tray icons are a Windows shell feature; returns a stub handle.</summary>
     public static ReactorTrayIcon OpenTrayIcon(TrayIconSpec spec)

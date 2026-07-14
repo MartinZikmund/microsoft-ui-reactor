@@ -52,7 +52,7 @@ internal static class UnoBootstrap
 /// </summary>
 internal sealed class ReactorApplication : Application
 {
-    private ReactorHost? _host;
+    private ReactorWindow? _primary;
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
@@ -84,9 +84,6 @@ internal sealed class ReactorApplication : Application
 
         var opts = ReactorApp.Options;
 
-        var window = new Window();
-        try { window.Title = opts.WindowTitle; } catch { /* best effort */ }
-
         var spec = new WindowSpec
         {
             Title = opts.WindowTitle,
@@ -94,30 +91,10 @@ internal sealed class ReactorApplication : Application
             Height = opts.WindowHeight,
             FullScreen = opts.FullScreen,
         };
-        var reactorWindow = new ReactorWindow(window, spec);
-        ReactorApp.RegisterWindow(reactorWindow);
 
-        _host = new ReactorHost(window) { OwningWindow = reactorWindow };
-        opts.Configure?.Invoke(_host);
-
-        if (opts.RootFactory is not null)
-            _host.Mount(opts.RootFactory());
-        else if (opts.RootRenderFunc is not null)
-            _host.Mount(opts.RootRenderFunc);
-
-        // Best-effort initial sizing (desktop). AppWindow is partially supported
-        // across Skia heads; ignore failures.
-        try
-        {
-            window.AppWindow?.Resize(
-                new global::Windows.Graphics.SizeInt32
-                {
-                    Width = (int)opts.WindowWidth,
-                    Height = (int)opts.WindowHeight,
-                });
-        }
-        catch { /* sizing unsupported on this head */ }
-
-        window.Activate();
+        // The primary window goes through the same construction path as every
+        // secondary window opened later via ReactorApp.OpenWindow / UseOpenWindow.
+        _primary = ReactorApp.OpenWindowCore(
+            spec, opts.RootFactory, opts.RootRenderFunc, opts.Configure);
     }
 }

@@ -208,7 +208,7 @@ Legend: ✅ works · 🟡 partial / unverified · ❌ not supported (compiles, b
 | Gesture/access flags: `IsTapEnabled` / `IsHoldingEnabled` / `IsDoubleTapEnabled` / `IsRightTapEnabled`, `AccessKey`, `CharacterReceived` | 🟡 | Those specific flags no-op; basic pointer/click still works. |
 | High-contrast / forced-colors detection | ❌ | `AccessibilitySettings.HighContrast` not implemented — charts don't adapt to high contrast. |
 | Single window + render loop + error fallback | ✅ | |
-| Multi-window (`OpenWindow` / `UseOpenWindow`) | ❌ | Degrades to the primary window. |
+| Multi-window (`OpenWindow` / `UseOpenWindow`) | ✅ desktop | Real secondary windows on every desktop head (X11 / Win32 / macOS / FrameBuffer), each with its own `ReactorHost`, render loop and state. Android/iOS throw `InvalidOperationException` (Uno doesn't support secondary windows there) — `UseOpenWindow` catches it and degrades to a null handle. No OS windows in the browser (wasm). Demoed in `samples/Uno/ReactorUnoShowcase`. |
 | DPI | 🟡 | Read via `XamlRoot.RasterizationScale`; `DpiChanged` is not raised. |
 | File / folder pickers | 🟡 | Compiled in via the Windows WinRT HWND path (`InitializeWithWindow`); **unverified** on Skia heads — not a stub. |
 | Tray icons / shell (jump list, taskbar) | ❌ | Stub no-ops. |
