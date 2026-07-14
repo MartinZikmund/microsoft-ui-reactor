@@ -80,6 +80,11 @@ class SecondWindow : Component
     public override Element Render()
     {
         var (count, setCount) = UseState(0);
+        var (locked, setLocked) = UseState<bool?>(false);
+
+        // A real closing guard, backed by Uno's AppWindow.Closing on the desktop
+        // heads: tick the box and the window refuses to close.
+        UseClosingGuard(() => locked != true);
 
         return VStack(12,
             Heading("Second window 🎉"),
@@ -88,7 +93,11 @@ class SecondWindow : Component
             HStack(8,
                 Button("-", () => setCount(count - 1)),
                 Button("+", () => setCount(count + 1))
-            )
+            ),
+            CheckBox(locked, b => setLocked(b), label: "Prevent closing"),
+            TextBlock(locked == true
+                ? "Close is blocked — untick to close."
+                : "Close is allowed.")
         ).Padding(24);
     }
 }

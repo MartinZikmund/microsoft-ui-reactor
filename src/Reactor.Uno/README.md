@@ -215,7 +215,8 @@ Legend: ✅ works · 🟡 partial / unverified · ❌ not supported (compiles, b
 | Window persistence (placement save/restore) | ❌ | Not shared. |
 | System backdrop / Mica / DWM effects | ❌ | Not shared. |
 | Multi-monitor / display enumeration | ❌ | `ReactorDisplay.Displays` returns empty. |
-| Window drag-move, aspect-ratio lock, closing guards | ❌ | No-op stubs on Skia. |
+| Window closing guards (`UseClosingGuard`) | ✅ desktop | Backed by Uno's `AppWindow.Closing`. Guards stack; any returning `false` cancels the close, and a throwing guard fail-safes to "cancel" (same as the Windows framework). Honoured on desktop Windows / macOS / Linux. On Android, iOS and wasm the event still fires but cancellation has no effect (per Uno), so the close proceeds. Demoed on the Showcase's second window. |
+| Window drag-move, aspect-ratio lock | ❌ | Still no-op stubs — **not yet audited** against Uno's API surface (multi-window, DPI, pickers and closing guards all turned out to be implementable, so these may be too). |
 | Docking (dock manager, tab tear-off, floating windows, splitters) | ❌ | Excluded from the port entirely. |
 | In-app devtools | ❌ | `DevtoolsEnabled` is `false`. |
 | Charting / DataGrid / PropertyGrid | 🟡 | Compile and share the WinUI render path; not yet runtime-verified on Skia. |

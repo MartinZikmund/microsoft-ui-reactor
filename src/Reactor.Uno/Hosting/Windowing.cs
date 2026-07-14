@@ -12,6 +12,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Microsoft.UI.Reactor.Core;
 using WinUIWindow = Microsoft.UI.Xaml.Window;
 
@@ -222,8 +223,97 @@ public sealed class ReactorWindow
     /// <summary>Lifetime-bound aspect-ratio lock. No-op on Skia; returns a disposable token.</summary>
     public IDisposable RegisterAspectRatioOverride(double? widthOverHeight) => NoopDisposable.Instance;
 
-    /// <summary>Stacks a "can close?" guard. No-op token on Skia.</summary>
-    public IDisposable RegisterClosingGuard(Func<bool> canClose) => NoopDisposable.Instance;
+    // ── closing guards ──
+    //
+    // Backed by Uno's AppWindow.Closing, which honours cancellation on the desktop
+    // heads (Windows / macOS / Linux). On Android, iOS and WebAssembly the event
+    // still fires but Cancel has no effect, so the close proceeds — matching Uno's
+    // documented behaviour rather than pretending to guard.
+    //
+    // AppWindow.Closing must be handled synchronously (async work does not delay the
+    // close), which is exactly the Func<bool> contract the shared UseClosingGuard
+    // hook exposes.
+    private readonly object _closingGuardsLock = new();
+    private readonly List<Func<bool>> _closingGuards = new();
+    private bool _closingHooked;
+
+    /// <summary>
+    /// Registers a synchronous "can the window close right now?" predicate.
+    /// Multiple guards stack — any returning <c>false</c> cancels the close.
+    /// Dispose the returned token to unregister.
+    /// </summary>
+    public IDisposable RegisterClosingGuard(Func<bool> canClose)
+    {
+        ArgumentNullException.ThrowIfNull(canClose);
+
+        lock (_closingGuardsLock)
+        {
+            _closingGuards.Add(canClose);
+            EnsureClosingHooked();
+        }
+
+        return new GuardToken(this, canClose);
+    }
+
+    // Subscribe lazily: a window that never registers a guard pays nothing, and by
+    // the time a guard arrives (from an effect, so post-mount) the AppWindow exists.
+    private void EnsureClosingHooked()
+    {
+        if (_closingHooked) return;
+
+        try
+        {
+            var appWindow = NativeWindow.AppWindow;
+            if (appWindow is null) return;
+
+            appWindow.Closing += OnAppWindowClosing;
+            _closingHooked = true;
+        }
+        catch { /* AppWindow unavailable on this head */ }
+    }
+
+    private void OnAppWindowClosing(
+        Microsoft.UI.Windowing.AppWindow sender,
+        Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+    {
+        Func<bool>[] guards;
+        lock (_closingGuardsLock) { guards = _closingGuards.ToArray(); }
+
+        for (int i = 0; i < guards.Length; i++)
+        {
+            bool canClose;
+
+            // A guard is app code. A throwing guard fail-safes to "cancel" rather
+            // than escaping mid-close, matching the Windows framework's behaviour.
+            try { canClose = guards[i](); }
+            catch { canClose = false; }
+
+            if (!canClose)
+            {
+                args.Cancel = true;
+                return;
+            }
+        }
+    }
+
+    private sealed class GuardToken : IDisposable
+    {
+        private readonly ReactorWindow _owner;
+        private Func<bool>? _guard;
+
+        public GuardToken(ReactorWindow owner, Func<bool> guard)
+        {
+            _owner = owner;
+            _guard = guard;
+        }
+
+        public void Dispose()
+        {
+            var g = Interlocked.Exchange(ref _guard, null);
+            if (g is null) return;
+            lock (_owner._closingGuardsLock) { _owner._closingGuards.Remove(g); }
+        }
+    }
 
     /// <summary>Starts a framework-managed window drag/move loop. No-op on Skia.</summary>
     public void BeginDragMove() { }
