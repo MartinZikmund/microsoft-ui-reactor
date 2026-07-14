@@ -34,7 +34,7 @@ class Showcase : Component
 
                 TextBlock($"Slider value: {slider:0}"),
                 Slider(slider, 0, 100, setSlider),
-                ProgressBar(slider),
+                Progress(slider),
 
                 CheckBox(chk, b => setChk(b), label: "I agree"),
                 TextBlock(chk == true ? "Checked" : "Unchecked"),
