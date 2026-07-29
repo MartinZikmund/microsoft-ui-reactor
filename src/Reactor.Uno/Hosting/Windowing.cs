@@ -14,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Windowing;
 using WinUIWindow = Microsoft.UI.Xaml.Window;
 
 namespace Microsoft.UI.Reactor;
@@ -30,6 +31,28 @@ public enum WindowState
 public readonly record struct WindowKey(string Name);
 
 /// <summary>
+/// Caption height for a window whose content extends into the title bar.
+/// Mirrors the Windows framework's enum (and <c>Microsoft.UI.Windowing.TitleBarHeightOption</c>).
+/// </summary>
+/// <remarks>
+/// Declared here rather than source-shared because it lives in the Windows-only
+/// <c>Hosting/WindowSpec.cs</c>, which the Uno port replaces — but the shared
+/// <c>Core/Element.cs</c> and <c>Elements/ElementExtensions.cs</c> reference the
+/// type (<c>TitleBarElement.HeightOption</c> / <c>.Tall()</c>, issue #917).
+/// Uno implements the underlying <c>AppWindowTitleBar.PreferredHeightOption</c>
+/// on the desktop heads, so this is honoured for real.
+/// </remarks>
+public enum WindowTitleBarHeight
+{
+    /// <summary>Standard 32 DIP caption.</summary>
+    Standard,
+    /// <summary>Tall 48 DIP caption — the layout used when the title bar hosts navigation chrome.</summary>
+    Tall,
+    /// <summary>No caption area at all.</summary>
+    Collapsed,
+}
+
+/// <summary>
 /// Declarative description of a window's chrome. Only the members the shared
 /// core reads are modelled; the rest of the Windows <c>WindowSpec</c> surface
 /// (backdrop, embed, persistence, splitters, …) is intentionally omitted.
@@ -37,12 +60,27 @@ public readonly record struct WindowKey(string Name);
 public sealed record WindowSpec
 {
     public string Title { get; init; } = "Reactor App";
-    public double Width { get; init; } = 1024;
-    public double Height { get; init; } = 768;
+
+    /// <summary>
+    /// Initial DIP width. <c>null</c> (the default) leaves the initial width to
+    /// the OS, matching the Windows framework (issue #924) — Reactor does not
+    /// override that axis. When both axes are <c>null</c> no resize is issued.
+    /// </summary>
+    public double? Width { get; init; }
+
+    /// <summary>Initial DIP height. <c>null</c> defers to the OS. See <see cref="Width"/>.</summary>
+    public double? Height { get; init; }
+
     public bool FullScreen { get; init; }
     public WindowKey? Key { get; init; }
     /// <summary>Null = framework default; true/false = explicit opt-in/out.</summary>
     public bool? ExtendsContentIntoTitleBar { get; init; }
+
+    /// <summary>
+    /// System caption height. <c>null</c> leaves the platform default. Honoured
+    /// on the Uno desktop heads via <c>AppWindow.TitleBar.PreferredHeightOption</c>.
+    /// </summary>
+    public WindowTitleBarHeight? TitleBarHeight { get; init; }
 }
 
 /// <summary>Tray-icon spec stub — tray icons are a Windows shell feature.</summary>
@@ -197,16 +235,100 @@ public sealed class ReactorWindow
     internal void OnContentAttached(Microsoft.UI.Xaml.UIElement? content)
     {
         var root = content?.XamlRoot;
+
+        // XamlRoot is not assigned when Content is merely *set* — it appears
+        // when the element enters the live visual tree, which happens after
+        // Window.Activate(). Reactor attaches content from the render loop, so
+        // the first call here always arrives with a null XamlRoot. Returning
+        // early on that (null == null compares equal) would permanently skip
+        // both the DPI listener and the initial resize, so re-arm on Loaded and
+        // come back once the root really exists.
+        if (root is null)
+        {
+            if (content is Microsoft.UI.Xaml.FrameworkElement fe)
+            {
+                void OnLoaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs args)
+                {
+                    fe.Loaded -= OnLoaded;
+                    OnContentAttached(fe);
+                }
+                fe.Loaded -= OnLoaded;
+                fe.Loaded += OnLoaded;
+            }
+            return;
+        }
+
         if (ReferenceEquals(root, _xamlRoot)) return;
 
         if (_xamlRoot is not null)
             _xamlRoot.Changed -= OnXamlRootChanged;
 
         _xamlRoot = root;
-        if (_xamlRoot is null) return;
 
         _lastDpi = Dpi;
         _xamlRoot.Changed += OnXamlRootChanged;
+
+        // The XamlRoot has just appeared, so RasterizationScale is finally real —
+        // retry the initial resize if it had to be deferred (see ApplyInitialSize).
+        ApplyInitialSize();
+    }
+
+    private bool _initialSizeApplied;
+
+    /// <summary>
+    /// Applies <see cref="WindowSpec.Width"/>/<see cref="WindowSpec.Height"/> once.
+    /// </summary>
+    /// <remarks>
+    /// <para>Spec sizes are <b>DIPs</b>, but <c>AppWindow.Resize</c> takes
+    /// <b>physical pixels</b> — Uno's Win32 head hands the <c>SizeInt32</c>
+    /// straight to <c>SetWindowPos</c>, and Uno's own startup path multiplies by
+    /// <c>RasterizationScale</c> for exactly this reason. Without the conversion
+    /// every window is undersized above 100% scale (a 480x360 request measured
+    /// 320x240 DIP at 150%).</para>
+    /// <para>The scale is only knowable once the window has a <c>XamlRoot</c>,
+    /// which does not exist at <c>Activate</c> time because Reactor attaches
+    /// content from the dispatcher-queued render loop. So this is attempted
+    /// after activation and, if the scale isn't available yet, re-attempted from
+    /// <see cref="OnContentAttached"/>. It applies at most once either way.</para>
+    /// <para>A null axis means "let the OS pick" (issue #924); a spec with
+    /// neither axis set never resizes.</para>
+    /// </remarks>
+    internal void ApplyInitialSize()
+    {
+        if (_initialSizeApplied) return;
+
+        if (Spec.Width is null && Spec.Height is null)
+        {
+            _initialSizeApplied = true;
+            return;
+        }
+
+        var scale = NativeWindow.Content?.XamlRoot?.RasterizationScale ?? 0;
+        if (scale <= 0) return; // not realized yet — OnContentAttached retries
+
+        try
+        {
+            var appWindow = NativeWindow.AppWindow;
+            if (appWindow is null)
+            {
+                _initialSizeApplied = true;
+                return;
+            }
+
+            // Preserve the OS-chosen extent on whichever axis the spec leaves null.
+            var current = appWindow.Size;
+            int width = Spec.Width is { } w ? (int)Math.Round(w * scale) : current.Width;
+            int height = Spec.Height is { } h ? (int)Math.Round(h * scale) : current.Height;
+
+            appWindow.Resize(new global::Windows.Graphics.SizeInt32
+            {
+                Width = width,
+                Height = height,
+            });
+        }
+        catch { /* sizing unsupported on this head */ }
+
+        _initialSizeApplied = true;
     }
 
     private void OnXamlRootChanged(
@@ -327,6 +449,126 @@ public sealed class ReactorWindow
     internal bool TitleBarControlPresent
     {
         get { lock (_titleBarLock) { return _titleBarControlPresent; } }
+    }
+
+    // ── Caption height (issue #917) ────────────────────────────────────────
+    //
+    // The shared TitleBar element and reconciler call into these three members,
+    // so the Uno window has to provide them. They are NOT stubs: Uno implements
+    // AppWindowTitleBar.PreferredHeightOption for real on the desktop heads
+    // (Standard=32 / Tall=48 / Collapsed=0), so the caption half genuinely works.
+    //
+    // The *control* half (sizing the Microsoft.UI.Xaml.Controls.TitleBar so it
+    // agrees with the caption) is kept faithful to the Windows implementation
+    // even though Uno currently ships that control as a not-implemented stub —
+    // writing Height on it is harmless today and correct the moment Uno lands it.
+
+    private WeakReference<Microsoft.UI.Xaml.FrameworkElement>? _titleBarControl;
+    private bool _titleBarControlExplicitHeight;
+    private bool _titleBarControlHeightOwned;
+    private WindowTitleBarHeight? _elementTitleBarHeight;
+    private WindowTitleBarHeight? _effectiveTitleBarHeight;
+
+    /// <summary>
+    /// Withdraws a departing <c>TitleBar(...)</c> element's caption-height
+    /// contribution so a window that merely used to host one is not left tall
+    /// forever. Mirrors the Windows framework, including deliberately NOT
+    /// clearing <see cref="TitleBarControlPresent"/> (that latch drives
+    /// close-time teardown safety, where "was mounted at some point" is right).
+    /// </summary>
+    internal void ClearTitleBarControl()
+    {
+        _titleBarControl = null;
+        _titleBarControlExplicitHeight = false;
+        _titleBarControlHeightOwned = false;
+        _elementTitleBarHeight = null;
+        ApplyTitleBarHeight();
+    }
+
+    /// <summary>
+    /// Records the caption height declared by the mounted <c>TitleBar(...)</c>
+    /// element and applies both halves. <see cref="WindowSpec.TitleBarHeight"/>,
+    /// when set, wins over the element's declaration.
+    /// </summary>
+    internal void SetElementTitleBarHeight(
+        WindowTitleBarHeight? height,
+        Microsoft.UI.Xaml.FrameworkElement? control,
+        bool controlHasExplicitHeight)
+    {
+        _elementTitleBarHeight = height;
+        _titleBarControl = control is null
+            ? null
+            : new WeakReference<Microsoft.UI.Xaml.FrameworkElement>(control);
+        _titleBarControlExplicitHeight = controlHasExplicitHeight;
+        ApplyTitleBarHeight();
+    }
+
+    /// <summary>
+    /// Sizes the mounted WinUI <c>TitleBar</c> control to the caption height
+    /// Reactor actually applied — the control does not track the caption, so
+    /// Reactor pairs the two. An explicit <c>.Height(...)</c> owns the control
+    /// outright, and Reactor only clears a height it set itself.
+    /// </summary>
+    internal void SyncTitleBarControlHeight()
+    {
+        if (_titleBarControlExplicitHeight) return;
+        if (_titleBarControl is null || !_titleBarControl.TryGetTarget(out var control)) return;
+
+        try
+        {
+            if (_effectiveTitleBarHeight == WindowTitleBarHeight.Tall)
+            {
+                if (_titleBarControlHeightOwned
+                    && Math.Abs(control.Height - TitleBarElement.TallTitleBarControlHeight) < 0.5)
+                {
+                    return;
+                }
+                control.Height = TitleBarElement.TallTitleBarControlHeight;
+                _titleBarControlHeightOwned = true;
+            }
+            else if (_titleBarControlHeightOwned)
+            {
+                control.ClearValue(Microsoft.UI.Xaml.FrameworkElement.HeightProperty);
+                _titleBarControlHeightOwned = false;
+            }
+        }
+        catch { /* control not realized on this head */ }
+    }
+
+    // Writes the native caption height. The spec wins over the element; a
+    // non-extended window can't host a resized caption, so the control is held
+    // at Standard in that case (same rule as the Windows framework).
+    private void ApplyTitleBarHeight()
+    {
+        var resolved = Spec.TitleBarHeight ?? _elementTitleBarHeight;
+        if (resolved is null)
+        {
+            _effectiveTitleBarHeight = null;
+            SyncTitleBarControlHeight();
+            return;
+        }
+
+        try
+        {
+            var titleBar = NativeWindow.AppWindow?.TitleBar;
+            if (titleBar is null || !titleBar.ExtendsContentIntoTitleBar)
+            {
+                _effectiveTitleBarHeight = WindowTitleBarHeight.Standard;
+                SyncTitleBarControlHeight();
+                return;
+            }
+
+            titleBar.PreferredHeightOption = resolved.Value switch
+            {
+                WindowTitleBarHeight.Tall => TitleBarHeightOption.Tall,
+                WindowTitleBarHeight.Collapsed => TitleBarHeightOption.Collapsed,
+                _ => TitleBarHeightOption.Standard,
+            };
+            _effectiveTitleBarHeight = resolved;
+        }
+        catch { /* caption sizing unsupported on this head */ }
+
+        SyncTitleBarControlHeight();
     }
 
     /// <summary>Applies a changed spec to the live window (title only on Skia).</summary>

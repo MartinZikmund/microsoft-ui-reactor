@@ -16,6 +16,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Hosting;
+using Microsoft.UI.Windowing;
 
 namespace Microsoft.UI.Reactor;
 
@@ -25,8 +26,8 @@ internal sealed record ReactorAppOptions(
     Func<RenderContext, Element>? RootRenderFunc = null,
     Action<ReactorHost>? Configure = null,
     string WindowTitle = "Reactor App",
-    double WindowWidth = 1024,
-    double WindowHeight = 768,
+    double? WindowWidth = null,
+    double? WindowHeight = null,
     bool FullScreen = false);
 
 /// <summary>
@@ -179,6 +180,10 @@ public static partial class ReactorApp
 
             ApplyChrome(native, spec);
             native.Activate();
+            // DIP->physical sizing needs a live RasterizationScale, so it can
+            // only run once the window has a XamlRoot. Attempt it here and let
+            // ReactorWindow.OnContentAttached retry if that hasn't happened yet.
+            window.ApplyInitialSize();
         }
         catch
         {
@@ -190,22 +195,29 @@ public static partial class ReactorApp
         return window;
     }
 
-    // Title + initial size. AppWindow is only partially supported across Skia
-    // heads, so sizing is best-effort.
+    // Title + caption height. AppWindow is only partially supported across Skia
+    // heads, so every step is best-effort.
     private static void ApplyChrome(Microsoft.UI.Xaml.Window native, WindowSpec spec)
     {
         try { native.Title = spec.Title; } catch { /* best effort */ }
 
-        try
+        if (spec.TitleBarHeight is { } height)
         {
-            native.AppWindow?.Resize(
-                new global::Windows.Graphics.SizeInt32
+            try
+            {
+                var titleBar = native.AppWindow?.TitleBar;
+                if (titleBar is not null)
                 {
-                    Width = (int)spec.Width,
-                    Height = (int)spec.Height,
-                });
+                    titleBar.PreferredHeightOption = height switch
+                    {
+                        WindowTitleBarHeight.Tall => TitleBarHeightOption.Tall,
+                        WindowTitleBarHeight.Collapsed => TitleBarHeightOption.Collapsed,
+                        _ => TitleBarHeightOption.Standard,
+                    };
+                }
+            }
+            catch { /* caption sizing unsupported on this head */ }
         }
-        catch { /* sizing unsupported on this head */ }
     }
 
     /// <summary>Tray icons are a Windows shell feature; returns a stub handle.</summary>
@@ -244,8 +256,8 @@ public static partial class ReactorApp
     /// </summary>
     public static void Run<TRoot>(
         string title = "Reactor App",
-        double width = 1024,
-        double height = 768,
+        double? width = null,
+        double? height = null,
         bool fullScreen = false,
         Action<ReactorHost>? configure = null)
         where TRoot : Component, new()
@@ -267,8 +279,8 @@ public static partial class ReactorApp
     public static void Run(
         string title,
         Func<RenderContext, Element> rootRender,
-        double width = 1024,
-        double height = 768,
+        double? width = null,
+        double? height = null,
         bool fullScreen = false,
         Action<ReactorHost>? configure = null)
     {
@@ -288,8 +300,8 @@ public static partial class ReactorApp
     /// </summary>
     public static Task RunAsync<TRoot>(
         string title = "Reactor App",
-        double width = 1024,
-        double height = 768,
+        double? width = null,
+        double? height = null,
         bool fullScreen = false,
         Action<ReactorHost>? configure = null)
         where TRoot : Component, new()
@@ -308,8 +320,8 @@ public static partial class ReactorApp
     public static Task RunAsync(
         string title,
         Func<RenderContext, Element> rootRender,
-        double width = 1024,
-        double height = 768,
+        double? width = null,
+        double? height = null,
         bool fullScreen = false,
         Action<ReactorHost>? configure = null)
     {
@@ -321,5 +333,55 @@ public static partial class ReactorApp
             WindowHeight: height,
             FullScreen: fullScreen);
         return UnoBootstrap.RunAsync();
+    }
+
+    // ── mobile / native-head entry point ──────────────────────────────────
+
+    /// <summary>
+    /// Builds the Uno <see cref="Microsoft.UI.Xaml.Application"/> that hosts
+    /// <typeparamref name="TRoot"/>, without starting a host builder.
+    /// </summary>
+    /// <remarks>
+    /// <para>Android and iOS do not start from a console <c>Main</c> — the OS
+    /// owns the entry point (an <c>Activity</c> / <c>AppDelegate</c>) and the
+    /// native head hands Uno an application factory. <see cref="Run{TRoot}"/>
+    /// therefore cannot be used there; call this from the head instead:</para>
+    /// <code>
+    /// public class Application : Microsoft.UI.Xaml.NativeApplication
+    /// {
+    ///     public Application(IntPtr javaReference, JniHandleOwnership transfer)
+    ///         : base(() => ReactorApp.CreateApplication&lt;CounterApp&gt;("My App"),
+    ///                javaReference, transfer) { }
+    /// }
+    /// </code>
+    /// <para>Everything above the hosting layer — components, hooks, the
+    /// reconciler — is identical to desktop and WebAssembly.</para>
+    /// </remarks>
+    public static Microsoft.UI.Xaml.Application CreateApplication<TRoot>(
+        string title = "Reactor App",
+        Action<ReactorHost>? configure = null)
+        where TRoot : Component, new()
+    {
+        Options = new ReactorAppOptions(
+            RootFactory: static () => new TRoot(),
+            Configure: configure,
+            WindowTitle: title);
+        return new ReactorApplication();
+    }
+
+    /// <summary>
+    /// Render-function overload of <see cref="CreateApplication{TRoot}"/> for
+    /// native heads.
+    /// </summary>
+    public static Microsoft.UI.Xaml.Application CreateApplication(
+        string title,
+        Func<RenderContext, Element> rootRender,
+        Action<ReactorHost>? configure = null)
+    {
+        Options = new ReactorAppOptions(
+            RootRenderFunc: rootRender,
+            Configure: configure,
+            WindowTitle: title);
+        return new ReactorApplication();
     }
 }
