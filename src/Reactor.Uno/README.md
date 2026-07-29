@@ -237,7 +237,7 @@ Legend: ✅ works · 🟡 partial / unverified · ❌ not supported (compiles, b
 | System backdrop / Mica / DWM effects | ❌ | Not shared. |
 | Multi-monitor / display enumeration | ❌ | `ReactorDisplay.Displays` returns empty. |
 | Window closing guards (`UseClosingGuard`) | ✅ desktop | Backed by Uno's `AppWindow.Closing`. Guards stack; any returning `false` cancels the close, and a throwing guard fail-safes to "cancel" (same as the Windows framework). Honoured on desktop Windows / macOS / Linux. On Android, iOS and wasm the event still fires but cancellation has no effect (per Uno), so the close proceeds. Demoed on the Showcase's second window. |
-| Hot Reload (edit `Render()` while running) | ✅ | Reactor registers `[assembly: MetadataUpdateHandler]`, and Uno's own `HotReloadAgent` discovers and invokes **every** registered handler — so Reactor's re-render is driven by Uno's hot-reload pipeline on the targets `dotnet watch` alone can't reach. `UseState` survives; hook add/remove/reorder recovers by remounting. See [Hot Reload](#hot-reload) below. |
+| Hot Reload (edit `Render()` while running) | ✅ | Reactor registers `[assembly: MetadataUpdateHandler]`, and Uno's own `HotReloadAgent` discovers and invokes **every** registered handler — so Reactor's re-render is driven by Uno's hot-reload pipeline on the targets `dotnet watch` alone can't reach. Needs no opt-in. `UseState` survives; hook add/remove/reorder recovers by remounting. See [Hot Reload](#hot-reload) below. |
 | Declarative caption height (`TitleBar(...).Tall()`, `WindowSpec.TitleBarHeight`) | ✅ desktop | Backed by Uno's `AppWindowTitleBar.PreferredHeightOption` (Standard 32 / Tall 48 / Collapsed 0), which Uno implements for real. The WinUI `TitleBar` *control* is still an Uno stub, so only the caption half is visible today. |
 | Window drag-move, aspect-ratio lock | ❌ | Still no-op stubs — **not yet audited** against Uno's API surface (multi-window, DPI, pickers and closing guards all turned out to be implementable, so these may be too). |
 | Docking (dock manager, tab tear-off, floating windows, splitters) | ❌ | Excluded from the port entirely. |
@@ -280,8 +280,15 @@ handlerActions.UpdateApplication.ForEach(a => a(updatedTypes));
 
 So on the targets where the Uno **Dev Server** delivers the deltas rather than
 `dotnet watch` — WebAssembly, Android, iOS — Uno drives Reactor's re-render for
-free. That is why the samples enable `HotReload` in `UnoFeatures`; without it
-there is no dev-server client and only desktop `dotnet watch` works.
+free, with no Reactor-side work at all.
+
+Nothing has to be opted into for this. There is **no `HotReload` UnoFeature**
+(passing one just warns `Unable to parse 'hotreload' to a known Uno Feature` and
+is ignored); the dev-server client `Uno.WinUI.DevServer` / `Uno.UI.RemoteControl`
+is referenced automatically for Debug builds, and the Dev Server process itself is
+started by the IDE. `.UseStudio()` is likewise not needed — it lives in
+`Uno.UI.HotDesign` and turns on **Hot Design**, Uno's runtime *XAML* visual
+designer, which does not apply to a XAML-free framework like Reactor.
 
 On an update Reactor re-renders the whole tree with `force: true` (bypassing memo),
 migrates hook cells whose types were edited, and treats a `HookOrderException` as

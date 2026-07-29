@@ -59,18 +59,21 @@ public class Application : Microsoft.UI.Xaml.NativeApplication
 ```bash
 cd samples/Uno/ReactorUnoCounter
 
-# Android — builds bin/Debug/net10.0-android/dev.reactor.unocounter-Signed.apk
-dotnet build -f net10.0-android
-
-# Deploy + launch on a connected device or running emulator (check `adb devices`)
+# Deploy + launch on a connected device or emulator (check `adb devices` first)
 dotnet build -f net10.0-android -t:Run
-
-# …or install the APK by hand
-adb install -r bin/Debug/net10.0-android/dev.reactor.unocounter-Signed.apk
 
 # iOS — compiles on Windows; deploying to a device needs a Mac
 dotnet build -f net10.0-ios
 ```
+
+> **Don't sideload the Debug APK.** A Debug Android build uses .NET's *Fast
+> Deployment*: the managed assemblies are **not inside the APK** — the deploy
+> tooling pushes them separately to `files/.__override__/`. Installing the APK by
+> hand therefore produces an app that aborts at startup with
+> `No assemblies found in '…/.__override__/arm64-v8a'` (SIGABRT), which the phone
+> reports only as a generic failure. Use `-t:Run`, or build a self-contained APK
+> with `-p:EmbedAssembliesIntoApk=true` (or `-c Release`) if you really need to
+> sideload one.
 
 > Reactor apps contain **no XAML**, so there is no `ApplicationDefinition` for
 > Uno's iOS Hot Restart helper generator to read and it fails with `Uno0005`. The
@@ -110,8 +113,15 @@ dotnet build Reactor.Uno.slnx -f net10.0-ios
 
 ## Hot Reload
 
-Both app samples enable `HotReload` in `UnoFeatures`, so `dotnet watch` (desktop)
-and the Uno Dev Server (wasm / Android / iOS) both re-render edits to a
-`Component.Render()` body live, preserving `UseState`. One caveat: from the CLI,
-`dotnet watch -f <tfm>` only works against a **single-targeted** head — see
+`dotnet watch` (desktop) and the Uno Dev Server (wasm / Android / iOS) both
+re-render edits to a `Component.Render()` body live, preserving `UseState`.
+
+No opt-in is required: there is **no `HotReload` UnoFeature**, the dev-server
+client is referenced automatically in Debug builds, and the Dev Server itself is
+started by the IDE. (`.UseStudio()` is not needed either — that enables **Hot
+Design**, Uno's runtime *XAML* designer, which doesn't apply to a XAML-free
+framework.)
+
+One caveat: from the CLI, `dotnet watch -f <tfm>` only works against a
+**single-targeted** head — see
 [the Hot Reload section in the port README](../../src/Reactor.Uno/README.md#hot-reload).
