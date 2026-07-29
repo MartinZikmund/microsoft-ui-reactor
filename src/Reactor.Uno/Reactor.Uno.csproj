@@ -30,11 +30,18 @@
     </UnoFeatures>
   </PropertyGroup>
 
-  <!-- ── Shared source from the Windows framework (src/Reactor) ──
-       Portable subsystems, source-shared verbatim. Windows-only Docking and
+  <!-- ── Shared source from the Windows framework ──
+       Portable subsystems, source-shared verbatim from BOTH src/Reactor (core)
+       and src/Reactor.Advanced (the charting / markdown / data-grid subsystems,
+       moved out of core by spec 062 Track B). Windows-only Docking, Win2D, and
        most of Hosting (windowing/shell/persistence/devtools) are excluded and
        replaced by this project's Uno hosting layer; a few portable Hosting
-       files are pulled in explicitly below. -->
+       files are pulled in explicitly below.
+
+       NOTE: an <Compile Include> glob that matches ZERO files is silent in
+       MSBuild — that is exactly how Track B dropped 74 files out of this port
+       with a green build. The VerifySharedSourceRoots target at the bottom of
+       this file turns that failure mode into a build error. -->
   <ItemGroup>
     <Compile Include="..\Reactor\Core\**\*.cs" />
     <Compile Include="..\Reactor\Hooks\**\*.cs" />
@@ -45,8 +52,14 @@
     <Compile Include="..\Reactor\Yoga\**\*.cs" />
     <Compile Include="..\Reactor\Data\**\*.cs" />
     <Compile Include="..\Reactor\Controls\**\*.cs" />
-    <Compile Include="..\Reactor\Markdown\**\*.cs" />
-    <Compile Include="..\Reactor\Charting\**\*.cs" />
+
+    <!-- Reactor.Advanced subsystems that are portable to Skia. Verified free of
+         Win2D and Docking coupling, so they do NOT drag in the Win2D
+         PackageReference that Reactor.Advanced itself carries. Docking/ and
+         Win2D/ stay excluded (Win32 / D2D interop). -->
+    <Compile Include="..\Reactor.Advanced\Markdown\**\*.cs" />
+    <Compile Include="..\Reactor.Advanced\Charting\**\*.cs" />
+    <Compile Include="..\Reactor.Advanced\Controls\DataGrid\**\*.cs" />
 
     <!-- Top-level diagnostics (EventSource-based tracing; portable). -->
     <Compile Include="..\Reactor\Diagnostics\**\*.cs" />
@@ -113,5 +126,35 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
     <PackageReference Include="Uno.WinUI.Runtime.Skia.Android" Version="$(UnoVersion)" />
   </ItemGroup>
+
+  <!-- Source-share drift guard.
+       This project consumes the Windows framework by globbing folders out of
+       sibling projects. When upstream MOVES one of those folders, the glob
+       quietly matches nothing and the subsystem disappears from the port with a
+       perfectly green build. That is not hypothetical: spec 062 Track B moved
+       Charting/, Markdown/ and the DataGrid into Reactor.Advanced and this port
+       silently lost 74 files.
+
+       Asserting the roots exist converts that into an immediate, legible build
+       error. Keep this list in sync with the Compile globs above. -->
+  <Target Name="VerifySharedSourceRoots" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <SharedSourceRoot Include="..\Reactor\Core" />
+      <SharedSourceRoot Include="..\Reactor\Hooks" />
+      <SharedSourceRoot Include="..\Reactor\Elements" />
+      <SharedSourceRoot Include="..\Reactor\Input" />
+      <SharedSourceRoot Include="..\Reactor\Accessibility" />
+      <SharedSourceRoot Include="..\Reactor\Animation" />
+      <SharedSourceRoot Include="..\Reactor\Yoga" />
+      <SharedSourceRoot Include="..\Reactor\Data" />
+      <SharedSourceRoot Include="..\Reactor\Controls" />
+      <SharedSourceRoot Include="..\Reactor\Diagnostics" />
+      <SharedSourceRoot Include="..\Reactor.Advanced\Markdown" />
+      <SharedSourceRoot Include="..\Reactor.Advanced\Charting" />
+      <SharedSourceRoot Include="..\Reactor.Advanced\Controls\DataGrid" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(SharedSourceRoot.Identity)')"
+           Text="Source-share root '%(SharedSourceRoot.Identity)' no longer exists. Upstream moved or renamed it, so the matching &lt;Compile Include&gt; glob is now matching zero files and that subsystem has silently dropped out of the Uno port. Re-point the glob (and this list) at the new location." />
+  </Target>
 
 </Project>
