@@ -207,11 +207,67 @@ public sealed class ReactorHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Hot Reload state migration entry point (spec 049 §6). Runs once at the
+    /// start of a hot-reload render pass, before any component re-renders, and
+    /// asks every live <see cref="RenderContext"/> to value-swap hook cells
+    /// whose stored type was edited. The root component/function context is not
+    /// registered with the reconciler, so it is migrated explicitly. Never
+    /// throws out — a migration failure must not abort the reload render.
+    /// </summary>
+    private void MigrateHotReloadState()
+    {
+        if (!HotReloadService.IsHotReloadLive) return;
+
+        var updatedTypes = HotReloadService.UpdatedTypes;
+        if (updatedTypes is null || updatedTypes.Count == 0) return;
+
+        try
+        {
+            _rootComponent?.Context.MigrateHooksForHotReload(updatedTypes);
+            _funcContext?.MigrateHooksForHotReload(updatedTypes);
+            _reconciler.ForEachLiveContext(ctx => ctx.MigrateHooksForHotReload(updatedTypes));
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Hot reload: state migration pass failed; continuing with re-render");
+        }
+    }
+
     private void Render()
     {
         _isRendering = true;
+
+        // Hot Reload (spec 049). HotReloadService is source-shared from the
+        // Windows framework and its [assembly: MetadataUpdateHandler] is active
+        // in this assembly too, so `dotnet watch` edits land here identically:
+        // atomic capture-and-clear gives at-most-once recovery per
+        // UpdateApplication call.
+        bool hotReloadRender = HotReloadService.ConsumeUpdatePending();
+
+        // Open a tree-wide pass so the reconciler can recover hook-order changes
+        // in non-root children (Reconciler.UpdateComponent reads WithinUpdatePass).
+        using IDisposable? hotReloadPass = hotReloadRender
+            ? HotReloadService.BeginUpdatePass()
+            : null;
+
+        // Value-swap hook cells whose stored type was edited, so adding or
+        // removing a field on a record held in UseState/UseReducer preserves the
+        // surviving values instead of resetting to the initializer.
+        if (hotReloadRender)
+            MigrateHotReloadState();
+
         var prevActiveHost = ReactorApp.ActiveHostInternal;
         ReactorApp.ActiveHostInternal = this;
+
+        void RecoverFromHookOrder(HookOrderException ex, RenderContext ctx, string mode)
+        {
+            _logger?.LogWarning(ex,
+                "Hot reload: hook order/type changed — resetting {Mode} state and re-rendering",
+                mode);
+            ctx.ResetForHotReload();
+            RequestRender();
+        }
 
         try
         {
@@ -224,6 +280,16 @@ public sealed class ReactorHost : IDisposable
             {
                 _rootComponent.Context.BeginRender(rerender);
                 try { newTree = _rootComponent.Render(); }
+                catch (HookOrderException ex) when (hotReloadRender)
+                {
+                    // An edit that adds/removes/reorders hooks changes the hook
+                    // shape the context was built with. Under hot reload that is
+                    // an expected consequence of the edit, not a user bug: drop
+                    // the hook state and re-mount rather than falling through to
+                    // the error overlay.
+                    RecoverFromHookOrder(ex, _rootComponent.Context, "component");
+                    return;
+                }
                 catch (Exception ex)
                 {
                     _logger?.LogError(ex, "Component Render() threw");
@@ -235,6 +301,11 @@ public sealed class ReactorHost : IDisposable
             {
                 _funcContext.BeginRender(rerender);
                 try { newTree = _rootRenderFunc(_funcContext); }
+                catch (HookOrderException ex) when (hotReloadRender)
+                {
+                    RecoverFromHookOrder(ex, _funcContext, "function-component");
+                    return;
+                }
                 catch (Exception ex)
                 {
                     _logger?.LogError(ex, "Function component threw");

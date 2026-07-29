@@ -12,8 +12,15 @@
 
     <Nullable>enable</Nullable>
 
+    <!-- HotReload pulls in the Uno dev-server client (Uno.WinUI.DevServer).
+         Reactor's own hot reload rides on the standard .NET
+         [assembly: MetadataUpdateHandler], and Uno's HotReloadAgent discovers
+         and invokes every registered handler - so with this on, editing a
+         Component.Render() body re-renders live through Uno's pipeline on the
+         targets `dotnet watch` alone cannot reach (wasm, Android, iOS). -->
     <UnoFeatures>
       SkiaRenderer;
+      HotReload;
     </UnoFeatures>
   </PropertyGroup>
 
