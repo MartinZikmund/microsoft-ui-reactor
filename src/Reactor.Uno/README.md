@@ -18,8 +18,8 @@ layer replacing the Windows-only windowing/shell stack.
 |---|---|---|
 | Desktop (Win32 / X11 / macOS / Framebuffer) | `net10.0-desktop` | ✅ Builds **and runs** — interactive |
 | WebAssembly | `net10.0-browserwasm` | ✅ Builds **and runs** in the browser |
-| Android | `net10.0-android` | ✅ Library **compiles** (a mobile head is needed to deploy) |
-| iOS / Mac Catalyst | — | Not wired, but the framework is pure `Microsoft.UI.Xaml`, so it should compile similarly |
+| Android | `net10.0-android` | ✅ Builds to a **signed APK** via the [`ReactorUnoDroid`](../../samples/Uno/ReactorUnoDroid) head; on-device run not yet verified |
+| iOS / Mac Catalyst | — | Not wired. The framework is pure `Microsoft.UI.Xaml` and the Android head shows the shape a native head needs (`ReactorApp.CreateApplication<TRoot>()` from an `AppDelegate`), so it should port similarly |
 
 Verified end-to-end: `UseState` → `Button` click → reconciler diff → patched
 `TextBlock`, and a controlled `TextBox` with two-way binding, both on Skia
@@ -131,13 +131,27 @@ Reactor.Uno.slnx            # dedicated solution (kept out of the main Reactor.s
 
 ### Source sharing
 
-`Reactor.Uno.csproj` pulls the portable framework folders from `../Reactor`
-via explicit `<Compile Include>` globs: `Core`, `Hooks`, `Elements`, `Input`,
-`Accessibility`, `Animation`, `Yoga`, `Flex`, `Data`, `Controls`, `Markdown`,
-`Charting`, `Diagnostics`, plus a few portable `Hosting/*` files (the charting
-bridge, render stats, hot-reload service, XAML interop). The wrapper
-source-generator (`Reactor.Wrappers.Generator`) runs as an analyzer to emit the
-control descriptors, exactly as in the Windows build.
+`Reactor.Uno.csproj` pulls the portable framework folders in via explicit
+`<Compile Include>` globs, from **two** projects:
+
+- from `../Reactor` (core): `Core`, `Hooks`, `Elements`, `Input`,
+  `Accessibility`, `Animation`, `Yoga`, `Data`, `Controls`, `Diagnostics`, plus a
+  few portable `Hosting/*` files (the charting bridge, render stats, hot-reload
+  service, XAML interop);
+- from `../Reactor.Advanced`: `Charting`, `Markdown` and `Controls/DataGrid`.
+  Spec 062 Track B moved these out of core into a separate Windows-only
+  *project*, but the *source* is portable — verified free of Win2D and Docking
+  coupling. `Docking/` and `Win2D/` stay excluded.
+
+The wrapper source-generator (`Reactor.Wrappers.Generator`) runs as an analyzer
+to emit the control descriptors, exactly as in the Windows build.
+
+> **Source-share drift is the main hazard of this design.** A `<Compile Include>`
+> glob that matches zero files is completely silent in MSBuild, so when Track B
+> moved those three subsystems the port lost 74 files with a green build. The
+> `VerifySharedSourceRoots` target in `Reactor.Uno.csproj` now fails the build if
+> any shared root stops existing; `ci-uno.yml` is path-gated on both
+> `src/Reactor/**` and `src/Reactor.Advanced/**`.
 
 The assembly is named **`Reactor`** with root namespace
 **`Microsoft.UI.Reactor`** — identical to the Windows package — so consumer
@@ -216,12 +230,74 @@ Legend: ✅ works · 🟡 partial / unverified · ❌ not supported (compiles, b
 | System backdrop / Mica / DWM effects | ❌ | Not shared. |
 | Multi-monitor / display enumeration | ❌ | `ReactorDisplay.Displays` returns empty. |
 | Window closing guards (`UseClosingGuard`) | ✅ desktop | Backed by Uno's `AppWindow.Closing`. Guards stack; any returning `false` cancels the close, and a throwing guard fail-safes to "cancel" (same as the Windows framework). Honoured on desktop Windows / macOS / Linux. On Android, iOS and wasm the event still fires but cancellation has no effect (per Uno), so the close proceeds. Demoed on the Showcase's second window. |
+| Hot Reload (edit `Render()` while running) | ✅ | Reactor registers `[assembly: MetadataUpdateHandler]`, and Uno's own `HotReloadAgent` discovers and invokes **every** registered handler — so Reactor's re-render is driven by Uno's hot-reload pipeline on the targets `dotnet watch` alone can't reach. `UseState` survives; hook add/remove/reorder recovers by remounting. See [Hot Reload](#hot-reload) below. |
+| Declarative caption height (`TitleBar(...).Tall()`, `WindowSpec.TitleBarHeight`) | ✅ desktop | Backed by Uno's `AppWindowTitleBar.PreferredHeightOption` (Standard 32 / Tall 48 / Collapsed 0), which Uno implements for real. The WinUI `TitleBar` *control* is still an Uno stub, so only the caption half is visible today. |
 | Window drag-move, aspect-ratio lock | ❌ | Still no-op stubs — **not yet audited** against Uno's API surface (multi-window, DPI, pickers and closing guards all turned out to be implementable, so these may be too). |
 | Docking (dock manager, tab tear-off, floating windows, splitters) | ❌ | Excluded from the port entirely. |
 | In-app devtools | ❌ | `DevtoolsEnabled` is `false`. |
-| Charting / DataGrid / PropertyGrid | 🟡 | Compile and share the WinUI render path; not yet runtime-verified on Skia. |
+| Charting / DataGrid / PropertyGrid | 🟡 | Source-shared from `Reactor.Advanced` and compiling on all three TFMs; render path shared with WinUI, but not yet runtime-verified on Skia. |
+| Markdown rendering | 🟡 | Source-shared from `Reactor.Advanced`. Compiles, but depends on `RichTextBlock`, which Uno implements only partially — so rich output renders incompletely. |
 
 > The ❌ / 🟡 runtime rows line up with the `Uno0001` *not-implemented* build warnings: the code compiles, but those specific APIs no-op (or throw) on Uno. They don't affect the ✅ rows.
+
+## Hot Reload
+
+**Yes — editing a `Component.Render()` body updates the running app, and
+`UseState` survives.** Verified on Skia desktop:
+
+```
+dotnet watch ⌚ File updated: .\Program.cs
+dotnet watch 🔥 C# and Razor changes applied in 424ms.
+```
+…with the counter still reading the value it held before the edit.
+
+### How it composes with Uno's Hot Reload
+
+Reactor does **not** implement a competing mechanism. `Hosting/HotReloadService.cs`
+(source-shared from the Windows framework) registers the standard
+
+```csharp
+[assembly: MetadataUpdateHandler(typeof(HotReloadService))]
+```
+
+and Uno's own `ClientHotReloadProcessor` registers itself the same way. They are
+peers on one runtime mechanism, not layers. Crucially, Uno's `HotReloadAgent`
+scans **every** loaded assembly for `MetadataUpdateHandlerAttribute` and invokes
+what it finds:
+
+```csharp
+// Uno.UI.RemoteControl/HotReload/MetadataUpdater/HotReloadAgent.cs
+handlerActions.ClearCache.ForEach(a => a(updatedTypes));
+handlerActions.UpdateApplication.ForEach(a => a(updatedTypes));
+```
+
+So on the targets where the Uno **Dev Server** delivers the deltas rather than
+`dotnet watch` — WebAssembly, Android, iOS — Uno drives Reactor's re-render for
+free. That is why the samples enable `HotReload` in `UnoFeatures`; without it
+there is no dev-server client and only desktop `dotnet watch` works.
+
+On an update Reactor re-renders the whole tree with `force: true` (bypassing memo),
+migrates hook cells whose types were edited, and treats a `HookOrderException` as
+"the edit changed the hook shape" — it drops that context's hook state and
+remounts instead of showing the error overlay.
+
+### Caveat: multi-targeted heads under `dotnet watch`
+
+`dotnet watch -f <tfm>` against an app head whose csproj lists **more than one**
+TFM currently loads a Roslyn workspace with no references, and every edit fails
+with a wall of `CS0518: Predefined type 'System.Object' is not defined`. This is
+not Reactor-specific — it reproduces from the TFM list alone:
+
+| Head `TargetFrameworks` | Result |
+| --- | --- |
+| `net10.0-desktop;net10.0-browserwasm` | ❌ `CS0518` cascade, hot reload dead |
+| `net10.0-desktop` | ✅ `🔥 C# changes applied` |
+
+The referenced library may stay multi-targeted — only the **head** matters. So
+when hot-reloading from the CLI, either single-target the head or use an IDE
+(VS / VS Code / Rider), which drives the Uno Dev Server and picks one TFM per
+debug session. The unrelated `Found project reference without a matching
+metadata reference` warning is benign — it is present in the working case too.
 
 ## Known limitations / notes
 
