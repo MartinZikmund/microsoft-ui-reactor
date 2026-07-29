@@ -30,10 +30,15 @@ internal static class UnoBootstrap
 
 #if __WASM__
         builder = builder.UseWebAssembly();
-#elif __ANDROID__ || __IOS__ || __MACCATALYST__ || __TVOS__
-        // Mobile/Apple heads bootstrap from a native entry point (Activity /
-        // AppDelegate) rather than a console Main; the platform provider is wired
-        // by the head. ReactorApp.Run is desktop/WASM-oriented.
+#elif __IOS__ || __MACCATALYST__ || __TVOS__
+        // Apple heads DO start from a real Main, and Uno gives them the same
+        // host-builder shape as desktop — so ReactorApp.Run works there
+        // unchanged, with UIKit as the platform provider.
+        builder = builder.UseAppleUIKit();
+#elif __ANDROID__
+        // Android is the one target with no console entry point: the OS starts
+        // an Activity, so the head calls ReactorApp.CreateApplication<TRoot>()
+        // and this builder path is never reached.
 #else
         builder = builder
             .UseX11()

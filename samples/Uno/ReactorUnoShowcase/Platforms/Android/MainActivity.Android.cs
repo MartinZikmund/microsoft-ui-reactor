@@ -1,8 +1,7 @@
 using Android.App;
-using Android.OS;
 using Android.Views;
 
-namespace ReactorUnoDroid.Droid;
+namespace ReactorUnoShowcase.Droid;
 
 [Activity(
     MainLauncher = true,

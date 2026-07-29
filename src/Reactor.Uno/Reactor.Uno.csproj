@@ -1,7 +1,7 @@
 <Project Sdk="Uno.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net10.0-desktop;net10.0-browserwasm;net10.0-android</TargetFrameworks>
+    <TargetFrameworks>net10.0-desktop;net10.0-browserwasm;net10.0-android;net10.0-ios</TargetFrameworks>
 
     <UnoSingleProject>true</UnoSingleProject>
     <OutputType>Library</OutputType>
@@ -121,10 +121,17 @@
     <PackageReference Include="Uno.WinUI.Runtime.Skia.WebAssembly.Browser" Version="$(UnoVersion)" />
   </ItemGroup>
 
-  <!-- Android Skia runtime (theoretical mobile target; library compiles, a
-       mobile head wires the native entry point). -->
+  <!-- Android Skia runtime. The head supplies the Activity entry point and
+       calls ReactorApp.CreateApplication<TRoot>(). -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
     <PackageReference Include="Uno.WinUI.Runtime.Skia.Android" Version="$(UnoVersion)" />
+  </ItemGroup>
+
+  <!-- Apple (UIKit) Skia runtime: UseAppleUIKit. Unlike Android, the Apple heads
+       start from a real Main and take the same UnoPlatformHostBuilder shape as
+       desktop, so ReactorApp.Run works there unchanged. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
+    <PackageReference Include="Uno.WinUI.Runtime.Skia.AppleUIKit" Version="$(UnoVersion)" />
   </ItemGroup>
 
   <!-- Source-share drift guard.

@@ -6,16 +6,19 @@ Samples that run **Microsoft.UI.Reactor** on Uno Platform Skia targets
 
 | Sample | What it shows | Targets |
 | --- | --- | --- |
-| [`ReactorUnoCounter`](ReactorUnoCounter) | Minimal counter — the smallest Reactor-on-Uno app | desktop, wasm |
-| [`ReactorUnoShowcase`](ReactorUnoShowcase) | ToggleSwitch, Slider, ProgressBar, CheckBox, ComboBox, pickers, multi-window | desktop, wasm |
-| [`ReactorUnoDroid`](ReactorUnoDroid) | The same counter component on **Android**, bootstrapped from an `Activity` | android |
+| [`ReactorUnoCounter`](ReactorUnoCounter) | Minimal counter — the smallest Reactor-on-Uno app | desktop, wasm, android, ios |
+| [`ReactorUnoShowcase`](ReactorUnoShowcase) | ToggleSwitch, Slider, ProgressBar, CheckBox, ComboBox, pickers, multi-window | desktop, wasm, android, ios |
 | [`file-based/Counter.cs`](file-based/Counter.cs) | A whole WinUI-style Reactor app in **one `.cs` file** (`dotnet run Counter.cs`) | desktop |
+
+Both app samples are **single Uno projects targeting all four heads** — the
+`Component` source is identical everywhere; only the entry point differs.
 
 ## Prerequisites
 
 - **.NET 10 SDK** (`10.0.100`+ — see [`global.json`](global.json))
 - The **`wasm-tools`** workload for the WebAssembly target: `dotnet workload install wasm-tools`
-- The **`android`** workload for `ReactorUnoDroid`: `dotnet workload install android`
+- The **`android`** / **`ios`** workloads for the mobile heads: `dotnet workload install android ios`
+  (iOS compiles on Windows; deploying to a device still needs a Mac)
 
 The Uno projects resolve `Uno.Sdk` from the nearby `global.json` and restore from
 `nuget.org` only (see [`nuget.config`](nuget.config)); they do **not** inherit the
@@ -36,37 +39,43 @@ dotnet run -f net10.0-browserwasm
 
 Swap `ReactorUnoCounter` for `ReactorUnoShowcase` to run the control showcase.
 
-### ReactorUnoDroid (Android)
+### Android / iOS
 
-Android has no console entry point, so this head bootstraps from an `Activity`
-and asks Reactor for the `Application` rather than calling `ReactorApp.Run`:
+The same projects, different heads. Only the entry point is platform-specific:
+desktop and **iOS** both use `ReactorApp.Run<T>()` (Uno gives the Apple heads the
+same host-builder shape as desktop); **Android** is the one target with no console
+entry point, so `Platforms/Android/Main.Android.cs` starts from an `Activity` and
+asks Reactor for the `Application`:
 
 ```csharp
 public class Application : Microsoft.UI.Xaml.NativeApplication
 {
     public Application(IntPtr javaReference, JniHandleOwnership transfer)
-        : base(() => ReactorApp.CreateApplication<CounterApp>("Reactor Counter (Android)"),
+        : base(() => ReactorApp.CreateApplication<CounterApp>("Reactor Counter (Uno)"),
                javaReference, transfer) { }
 }
 ```
 
-The component itself is byte-for-byte the same as the desktop counter.
-
 ```bash
-cd samples/Uno/ReactorUnoDroid
+cd samples/Uno/ReactorUnoCounter
 
-# Build only (produces bin/Debug/net10.0-android/dev.reactor.unodroid-Signed.apk)
-dotnet build
+# Android — builds bin/Debug/net10.0-android/dev.reactor.unocounter-Signed.apk
+dotnet build -f net10.0-android
 
-# Deploy + launch on a connected device or running emulator
-dotnet build -t:Run
+# Deploy + launch on a connected device or running emulator (check `adb devices`)
+dotnet build -f net10.0-android -t:Run
+
+# …or install the APK by hand
+adb install -r bin/Debug/net10.0-android/dev.reactor.unocounter-Signed.apk
+
+# iOS — compiles on Windows; deploying to a device needs a Mac
+dotnet build -f net10.0-ios
 ```
 
-Check the device is visible first with `adb devices`. To install the APK by hand:
-
-```bash
-adb install -r bin/Debug/net10.0-android/dev.reactor.unodroid-Signed.apk
-```
+> Reactor apps contain **no XAML**, so there is no `ApplicationDefinition` for
+> Uno's iOS Hot Restart helper generator to read and it fails with `Uno0005`. The
+> samples set `<UnoDisableHotRestartHelperGeneration>true</...>`, which disables
+> only VS's iOS *Hot Restart* deploy helper — not Hot Reload.
 
 ### file-based/Counter.cs
 
@@ -87,10 +96,17 @@ From the repo root:
 dotnet build Reactor.Uno.slnx
 ```
 
-> Two samples are deliberately outside the solution: the file-based `Counter.cs`
-> (not a project — run it with `dotnet run Counter.cs`) and `ReactorUnoDroid`
-> (android-only, so a per-TFM slnx build would fail it with `NETSDK1005` — build
-> it directly with `cd samples/Uno/ReactorUnoDroid && dotnet build`).
+The solution builds per-TFM across all four heads:
+
+```bash
+dotnet build Reactor.Uno.slnx -f net10.0-desktop
+dotnet build Reactor.Uno.slnx -f net10.0-browserwasm
+dotnet build Reactor.Uno.slnx -f net10.0-android
+dotnet build Reactor.Uno.slnx -f net10.0-ios
+```
+
+> The file-based `Counter.cs` is not a project and is not in the solution — run it
+> directly with `dotnet run Counter.cs`.
 
 ## Hot Reload
 

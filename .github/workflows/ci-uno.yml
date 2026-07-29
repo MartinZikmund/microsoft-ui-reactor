@@ -5,14 +5,13 @@ name: CI (Uno)
 # Kept separate from ci.yml on purpose: the main CI drives the Windows / Windows
 # App SDK build against Reactor.slnx and must never restore Uno.Sdk. This leg
 # restores Uno.Sdk (from nuget.org, incl. the current 6.7.0-dev.* build the port
-# pins) and builds Reactor.Uno.slnx for desktop and WebAssembly, plus the Android
-# head in a second job. It is path-gated so it only runs when the Uno port or the
+# pins) and builds Reactor.Uno.slnx for desktop and WebAssembly, plus Android and
+# iOS in a second job. It is path-gated so it only runs when the Uno port or the
 # shared source it source-shares (src/Reactor, src/Reactor.Advanced) changes.
 #
-# Android is built as its own step: the library targets net10.0-android and
-# samples/Uno/ReactorUnoDroid is a real deployable head, but that project is not
-# in Reactor.Uno.slnx (it targets android only, so a per-TFM slnx build fails it
-# with NETSDK1005) and it needs the android workload. See issue #2033.
+# Both samples are Uno single-projects targeting all four heads, so the whole
+# solution builds per-TFM for desktop / wasm / android / ios. Android and iOS run
+# in a second job because they need extra workloads. See issue #2033.
 
 on:
   pull_request:
@@ -74,10 +73,10 @@ jobs:
       - name: Build WebAssembly
         run: dotnet build Reactor.Uno.slnx -f net10.0-browserwasm -c Debug
 
-  build-android:
-    name: Build Reactor.Uno (android head)
+  build-mobile:
+    name: Build Reactor.Uno (android + ios)
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -86,10 +85,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install android workload
-        run: dotnet workload install android
+      - name: Install mobile workloads
+        run: dotnet workload install android ios
 
-      # Builds the library's net10.0-android TFM transitively and produces an APK,
-      # so the mobile head cannot silently rot.
-      - name: Build android head
-        run: dotnet build samples/Uno/ReactorUnoDroid/ReactorUnoDroid.csproj -c Debug
+      # Produces a signed APK for both samples, so the Android head cannot rot.
+      - name: Build Android
+        run: dotnet build Reactor.Uno.slnx -f net10.0-android -c Debug
+
+      # Managed compile only -- a device build/deploy needs a Mac, but this keeps
+      # the iOS head honest.
+      - name: Build iOS
+        run: dotnet build Reactor.Uno.slnx -f net10.0-ios -c Debug

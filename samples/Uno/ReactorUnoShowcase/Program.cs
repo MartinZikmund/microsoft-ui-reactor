@@ -1,8 +1,21 @@
+// Secondary windows are real on every Uno *desktop* head (X11 / Win32 / macOS /
+// FrameBuffer) but throw InvalidOperationException on Android and iOS, and there
+// are no OS windows in the browser at all. So the multi-window demo is gated on
+// "desktop", not merely "not wasm".
+#if !__WASM__ && !__ANDROID__ && !__IOS__ && !__MACCATALYST__
+#define REACTOR_DESKTOP
+#endif
+
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
-#if __WASM__
+// Desktop and iOS share ReactorApp.Run; wasm needs the async entry (the browser
+// thread can't block); Android has no console entry point and starts from the
+// Activity in Platforms/Android/.
+#if __ANDROID__
+// intentionally empty — see Platforms/Android/
+#elif __WASM__
 await ReactorApp.RunAsync<Showcase>("Reactor Showcase (Uno)", width: 560, height: 620);
 #else
 ReactorApp.Run<Showcase>("Reactor Showcase (Uno)", width: 560, height: 620);
@@ -54,7 +67,7 @@ class Showcase : Component
                     var file = await UseFilePickerAsync(new FilePickerOptions());
                     setPicked(file?.Name ?? "(cancelled)");
                 })
-#if !__WASM__
+#if REACTOR_DESKTOP
                 ,
                 Heading("Multi-window"),
                 TextBlock("Each window gets its own Reactor host, render loop, and state."),
@@ -64,7 +77,7 @@ class Showcase : Component
         );
     }
 
-#if !__WASM__
+#if REACTOR_DESKTOP
     // Secondary windows are real on every Uno desktop head (X11 / Win32 / macOS /
     // FrameBuffer). Android and iOS throw InvalidOperationException instead.
     static void OpenSecondWindow() =>
@@ -74,7 +87,7 @@ class Showcase : Component
 #endif
 }
 
-#if !__WASM__
+#if REACTOR_DESKTOP
 class SecondWindow : Component
 {
     public override Element Render()

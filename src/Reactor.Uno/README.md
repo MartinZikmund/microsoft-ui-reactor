@@ -18,12 +18,19 @@ layer replacing the Windows-only windowing/shell stack.
 |---|---|---|
 | Desktop (Win32 / X11 / macOS / Framebuffer) | `net10.0-desktop` | ✅ Builds **and runs** — interactive |
 | WebAssembly | `net10.0-browserwasm` | ✅ Builds **and runs** in the browser |
-| Android | `net10.0-android` | ✅ Builds to a **signed APK** via the [`ReactorUnoDroid`](../../samples/Uno/ReactorUnoDroid) head; on-device run not yet verified |
-| iOS / Mac Catalyst | — | Not wired. The framework is pure `Microsoft.UI.Xaml` and the Android head shows the shape a native head needs (`ReactorApp.CreateApplication<TRoot>()` from an `AppDelegate`), so it should port similarly |
+| Android | `net10.0-android` | ✅ Builds to a **signed APK**; on-device run not yet verified |
+| iOS | `net10.0-ios` | ✅ **Compiles** (on Windows); device deploy needs a Mac and is not yet verified |
+
+Both samples are **single Uno projects targeting all four heads** — the component
+source is identical everywhere. Only the entry point differs: desktop and iOS use
+`ReactorApp.Run<T>()` (Uno gives the Apple heads the same host-builder shape as
+desktop), wasm uses `RunAsync` (the browser thread can't block), and Android — the
+only target with no console entry point — starts from an `Activity` that calls the
+new `ReactorApp.CreateApplication<TRoot>()`.
 
 Verified end-to-end: `UseState` → `Button` click → reconciler diff → patched
-`TextBlock`, and a controlled `TextBox` with two-way binding, both on Skia
-desktop; the same app renders in the browser via WASM.
+`TextBlock` on Skia desktop, and the same app rendering **and responding to
+clicks** in the browser via WASM.
 
 ## Quick start — a file-based, single-file Reactor app
 
