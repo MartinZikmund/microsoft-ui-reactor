@@ -1,0 +1,32 @@
+<Project Sdk="Uno.Sdk">
+
+  <PropertyGroup>
+    <!-- Android head only. Kept as its own project rather than another TFM on
+         ReactorUnoCounter because Android has no console entry point: the OS
+         starts an Activity, so the app is bootstrapped from
+         Platforms/Android/Main.Android.cs instead of top-level statements. -->
+    <TargetFrameworks>net10.0-android</TargetFrameworks>
+
+    <OutputType>Exe</OutputType>
+    <UnoSingleProject>true</UnoSingleProject>
+
+    <ApplicationTitle>Reactor Counter (Android)</ApplicationTitle>
+    <ApplicationId>dev.reactor.unodroid</ApplicationId>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationPublisher>Microsoft.UI.Reactor</ApplicationPublisher>
+    <Description>Microsoft.UI.Reactor running on Uno Platform / Android.</Description>
+
+    <Nullable>enable</Nullable>
+
+    <UnoFeatures>
+      SkiaRenderer;
+      HotReload;
+    </UnoFeatures>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Reactor.Uno\Reactor.Uno.csproj" />
+  </ItemGroup>
+
+</Project>
