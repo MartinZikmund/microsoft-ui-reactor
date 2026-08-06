@@ -342,13 +342,29 @@ public sealed class ReactorHost : IDisposable
             if (newControl != _currentControl)
             {
                 if (ContentTarget is not null)
+                {
                     ContentTarget.Child = newControl;
+                    AttachThemeListener(newControl);
+                    OwningWindow?.OnContentAttached(newControl);
+                }
                 else
-                    _window.Content = newControl;
-                AttachThemeListener(newControl);
-                // The XamlRoot (and hence RasterizationScale) only exists once
-                // content is attached — let the window (re)bind its DPI listener.
-                OwningWindow?.OnContentAttached(newControl);
+                {
+                    // Mount through a themed root rather than assigning the tree
+                    // to Window.Content directly. A Skia window paints nothing of
+                    // its own, so anything the app leaves transparent — a
+                    // NavigationView pane, the gutters around a smaller root —
+                    // shows through as black. WinUI gets a system-painted window
+                    // background for free; this is the Uno equivalent, and it
+                    // follows the light/dark theme because the brush is resolved
+                    // from the theme dictionary.
+                    var root = EnsureWindowRoot();
+                    root.Child = newControl;
+                    AttachThemeListener(newControl);
+                    // The XamlRoot (and hence RasterizationScale) only exists once
+                    // content is attached — let the window (re)bind its DPI
+                    // listener against the element that is actually in the tree.
+                    OwningWindow?.OnContentAttached(root);
+                }
             }
 
             _currentControl = newControl;
@@ -396,7 +412,55 @@ public sealed class ReactorHost : IDisposable
         fe.ActualThemeChanged += OnActualThemeChanged;
     }
 
-    private void OnActualThemeChanged(FrameworkElement sender, object args) => RequestRender();
+    private void OnActualThemeChanged(FrameworkElement sender, object args)
+    {
+        // The window root's brush was resolved from the theme dictionary at the
+        // time it was applied, so re-resolve it for the new theme before the
+        // re-render (a plain Background assignment is not a live ThemeResource).
+        ApplyWindowRootBackground();
+        RequestRender();
+    }
+
+    // Root container for the window-hosted case. A Skia window paints nothing of
+    // its own, so without this every region the app leaves transparent renders
+    // black. WinUI apps get this for free: a Page carries
+    // ApplicationPageBackgroundThemeBrush from its template, and the stock Uno
+    // template sets exactly that on its MainPage. Reactor hands the reconciled
+    // tree straight to Window.Content, so the host has to supply it.
+    private Microsoft.UI.Xaml.Controls.Border? _windowRoot;
+
+    private Microsoft.UI.Xaml.Controls.Border EnsureWindowRoot()
+    {
+        if (_windowRoot is not null) return _windowRoot;
+
+        // Built from markup rather than `new Border()` so Background is a real
+        // {ThemeResource} binding. Resolving the brush in code (reading
+        // Application.Current.Resources) is NOT theme-aware — it returns whichever
+        // variant the app dictionary happens to hold, which produced a dark
+        // background under a light theme.
+        try
+        {
+            _windowRoot = (Microsoft.UI.Xaml.Controls.Border)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+                """
+                <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" />
+                """);
+        }
+        catch
+        {
+            // XamlReader unavailable on this head — fall back to an unpainted root
+            // rather than failing the render.
+            _windowRoot = new Microsoft.UI.Xaml.Controls.Border();
+        }
+
+        _window.Content = _windowRoot;
+        return _windowRoot;
+    }
+
+    // The {ThemeResource} binding above re-resolves itself on theme change, so
+    // nothing to re-apply here; kept as a seam for heads where the markup path
+    // fell back to a plain Border.
+    private void ApplyWindowRootBackground() { }
 
     /// <summary>True when no render is pending, in-flight, or queued.</summary>
     public bool IsIdle =>
@@ -464,7 +528,7 @@ public sealed class ReactorHost : IDisposable
         if (ContentTarget is not null)
             ContentTarget.Child = errorPanel;
         else
-            _window.Content = errorPanel;
+            EnsureWindowRoot().Child = errorPanel;
         _currentControl = errorPanel;
         _currentTree = null;
     }
