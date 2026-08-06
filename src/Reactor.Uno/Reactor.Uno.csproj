@@ -42,6 +42,50 @@
        MSBuild — that is exactly how Track B dropped 74 files out of this port
        with a green build. The VerifySharedSourceRoots target at the bottom of
        this file turns that failure mode into a build error. -->
+  <!-- Hosting/ is cherry-picked file-by-file rather than globbed, so a NEW file
+       upstream is invisible here until something fails to compile (that is how
+       FrameNavigation.cs broke the port). Both lists below are checked against
+       the real folder by VerifyHostingTriage, so any new Hosting file forces an
+       explicit include-or-exclude decision. -->
+  <ItemGroup>
+    <!-- Portable: compiled into the port. -->
+    <SharedHostingFile Include="..\Reactor\Hosting\IChartingHostBridge.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\ChartingActivation.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\RenderStats.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\RenderPriorityPolicy.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\XamlInterop.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\HotReloadService.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\ReactorHotReloadCopier.cs" />
+    <SharedHostingFile Include="..\Reactor\Hosting\FrameNavigation.cs" />
+
+    <!-- Windows-only or replaced by this project's Uno hosting layer. Listed so
+         the triage check can tell "deliberately excluded" from "not yet seen". -->
+    <ExcludedHostingFile Include="..\Reactor\Hosting\BackdropApplier.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\DwmInterop.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\EmbedHostWatchdog.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\OverlayHostWiring.cs" />
+    <!-- Depends on the excluded ReactorHostControl. -->
+    <ExcludedHostingFile Include="..\Reactor\Hosting\PageHelper.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorApp.BuiltIns.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorApp.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorAppContext.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorCoreXamlMetadataProvider.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorDisplay.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorFeatures.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorHost.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorHostControl.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReactorWindow.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ReconcileHighlightOverlay.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\ThreadAffinity.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\UIThreadOnlyAttribute.cs" />
+    <!-- Declares WindowState, which this project's Hosting/Windowing.cs owns. -->
+    <ExcludedHostingFile Include="..\Reactor\Hosting\WindowEnums.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\WindowEvents.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\WindowIcon.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\WindowKey.cs" />
+    <ExcludedHostingFile Include="..\Reactor\Hosting\WindowSpec.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="..\Reactor\Core\**\*.cs" />
     <Compile Include="..\Reactor\Hooks\**\*.cs" />
@@ -60,20 +104,19 @@
     <Compile Include="..\Reactor.Advanced\Markdown\**\*.cs" />
     <Compile Include="..\Reactor.Advanced\Charting\**\*.cs" />
     <Compile Include="..\Reactor.Advanced\Controls\DataGrid\**\*.cs" />
+    <!-- The Markdown() factories, which live at the root of Reactor.Advanced
+         alongside the Win2D ones. Factories.cs itself is deliberately NOT shared:
+         it is entirely Win2D (CanvasControl et al), which Uno has no equivalent for. -->
+    <Compile Include="..\Reactor.Advanced\Factories.Markdown.cs" />
 
     <!-- Top-level diagnostics (EventSource-based tracing; portable). -->
     <Compile Include="..\Reactor\Diagnostics\**\*.cs" />
 
     <!-- Portable Hosting files the shared core depends on. The rest of Hosting
          (windowing/shell/persistence/devtools) is replaced by this project's
-         Uno hosting layer. -->
-    <Compile Include="..\Reactor\Hosting\IChartingHostBridge.cs" />
-    <Compile Include="..\Reactor\Hosting\ChartingActivation.cs" />
-    <Compile Include="..\Reactor\Hosting\RenderStats.cs" />
-    <Compile Include="..\Reactor\Hosting\RenderPriorityPolicy.cs" />
-    <Compile Include="..\Reactor\Hosting\XamlInterop.cs" />
-    <Compile Include="..\Reactor\Hosting\HotReloadService.cs" />
-    <Compile Include="..\Reactor\Hosting\ReactorHotReloadCopier.cs" />
+         Uno hosting layer. Declared as an item so VerifyHostingTriage below can
+         diff it against the folder. -->
+    <Compile Include="@(SharedHostingFile)" />
 
     <!-- Wrapper authoring attributes ([GenerateReactorDescriptor], …). Single
          file; compiled in directly (no separate assembly, so no CS0436). -->
@@ -162,6 +205,21 @@
     </ItemGroup>
     <Error Condition="!Exists('%(SharedSourceRoot.Identity)')"
            Text="Source-share root '%(SharedSourceRoot.Identity)' no longer exists. Upstream moved or renamed it, so the matching &lt;Compile Include&gt; glob is now matching zero files and that subsystem has silently dropped out of the Uno port. Re-point the glob (and this list) at the new location." />
+  </Target>
+
+  <!-- Companion guard for the cherry-picked Hosting/ folder.
+       The glob-based check above cannot help there: Hosting/ is picked
+       file-by-file, so a NEW upstream file is simply absent from the port until
+       some unrelated file fails to compile against it. Diff the folder against
+       the two declared lists and make the decision explicit instead. -->
+  <Target Name="VerifyHostingTriage" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <_AllHostingFiles Include="..\Reactor\Hosting\*.cs" />
+      <_TriagedHostingFiles Include="@(SharedHostingFile);@(ExcludedHostingFile)" />
+      <_UntriagedHostingFiles Include="@(_AllHostingFiles)" Exclude="@(_TriagedHostingFiles)" />
+    </ItemGroup>
+    <Error Condition="'@(_UntriagedHostingFiles)' != ''"
+           Text="New file(s) in src/Reactor/Hosting/ that the Uno port has not triaged: @(_UntriagedHostingFiles->'%(Filename)%(Extension)', ', '). Decide whether each is portable — add it to SharedHostingFile to compile it into the port, or to ExcludedHostingFile if it is Windows-only / replaced by the Uno hosting layer." />
   </Target>
 
 </Project>
